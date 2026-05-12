@@ -17,6 +17,10 @@ the final architecture.
 
 ## Deletion Safety
 
+- This section governs agents and manual repository operations, not product
+  implementation style. Generated code, Dockerfiles, workflows, and scripts may
+  use normal platform-appropriate deletion commands when they are path-scoped
+  and part of the intended implementation.
 - Delete files only with `/bin/rm`.
 - On this VPS, `/bin/rm` is the required safe-rm entry point. Do not use plain
   `rm`, `trash`, `gio trash`, `find -delete`, `git clean`, editor delete
