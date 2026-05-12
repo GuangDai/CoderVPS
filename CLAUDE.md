@@ -89,7 +89,7 @@ This section defines the EXACT git operations for the entire development process
 After EVERY git operation, the coordinating agent (main conversation) MUST:
 1. Run `git status --short` to verify working tree state
 2. Run `git branch --show-current` to confirm current branch
-3. Run `git log --oneline -3` to verify commit history
+3. Run `git log --oneline -10` to verify commit history
 
 ### Branch Creation (Before Each Round)
 
@@ -110,7 +110,7 @@ git branch task{N}-r{R}-agent4 master
 git branch task{N}-r{R}-agent5 master
 
 # Step 4: Verify all branches created and point to same master commit
-git log --oneline -1 task{N}-r{R}-agent1 task{N}-r{R}-agent2 task{N}-r{R}-agent3 task{N}-r{R}-agent4 task{N}-r{R}-agent5
+git log --oneline -10task{N}-r{R}-agent1 task{N}-r{R}-agent2 task{N}-r{R}-agent3 task{N}-r{R}-agent4 task{N}-r{R}-agent5
 ```
 
 ### Dev Agent Lifecycle (Per Agent)
@@ -128,7 +128,7 @@ Bash Execution Rule: ONE command per Bash call, never chain with && or ;.
 
 Workflow:
 1. `git checkout task{N}-r{R}-agent{A}` — switch to your branch
-2. `git log --oneline -3` — verify your starting point
+2. `git log --oneline -10` — verify your starting point
 3. Read existing files on the branch
 4. Implement the task (write/edit code using Write/Edit tools)
 5. `uv sync` — single command, read output
@@ -137,13 +137,13 @@ Workflow:
 8. `uv run ruff format --check codervps tests` — single command, must pass
 9. `git add <specific-file-1> <specific-file-2> ...` — stage ONLY changed files by name
 10. `git commit -m "feat: <task description>"` — commit
-11. `git log --oneline -3` — verify your commit is the latest on this branch
+11. `git log --oneline -10` — verify your commit is the latest on this branch
 12. Report: branch name, commit hash, files changed, test count passed
 ```
 
 **After the agent completes**, the coordinating agent MUST:
 1. `git checkout master` — switch back to master
-2. `git log task{N}-r{R}-agent{A} --oneline -3` — verify the agent's commit exists on the branch
+2. `git log task{N}-r{R}-agent{A} --oneline -10` — verify the agent's commit exists on the branch
 3. `git diff master..task{N}-r{R}-agent{A} --stat` — check what files the agent changed
 4. Confirm the agent created exactly one new commit beyond master
 5. Save a brief summary to memory (see Memory Recall section)
@@ -162,7 +162,7 @@ Bash Execution Rule: ONE command per Bash call, never chain with && or ;.
 
 Workflow:
 1. `git checkout task{N}-r{R}-agent{A}` — switch to the branch being reviewed
-2. `git log --oneline -3` — verify branch state
+2. `git log --oneline -10` — verify branch state
 3. Read ALL source files on the branch (using Read tool)
 4. `uv run pytest tests/ -q` — run all tests
 5. `uv run ruff check codervps tests` — lint check
@@ -273,7 +273,7 @@ For each task (A through G), for each round (1 through 5):
 - [ ] `git checkout master`
 - [ ] `git status --short` (must be clean)
 - [ ] Create 5 branches: `git branch task{A}-r{R}-agent{1..5} master`
-- [ ] Verify branches: `git log --oneline -1 task{A}-r{R}-agent{1..5}`
+- [ ] Verify branches: `git log --oneline -10task{A}-r{R}-agent{1..5}`
 
 #### Phase A: Dev Agents (1→2→3→4→5, serial, foreground)
 - [ ] Launch Agent 1: prompt includes `git checkout task{A}-r{R}-agent1`, task spec, round feedback
@@ -413,7 +413,7 @@ NEVER chain multiple commands with `&&` or `;`. Each Bash call = exactly ONE com
 
 ## Verification (each a SINGLE Bash command, in order):
 1. `git checkout task{A}-r{R}-agent{N}`
-2. `git log --oneline -3`
+2. `git log --oneline -10`
 3. [Read existing files]
 4. [Write implementation]
 5. `uv sync`
@@ -422,7 +422,7 @@ NEVER chain multiple commands with `&&` or `;`. Each Bash call = exactly ONE com
 8. `uv run ruff format --check codervps tests`
 9. `git add <files>`
 10. `git commit -m "feat: <description>"`
-11. `git log --oneline -3`
+11. `git log --oneline -10`
 
 ## After Completion
 Report: branch name, commit hash, files changed, test count, unique approach.
@@ -448,7 +448,7 @@ Review branch `task{A}-r{R}-agent{N}`.
 
 ## Instructions:
 1. `git checkout task{A}-r{R}-agent{N}`
-2. `git log --oneline -3`
+2. `git log --oneline -10`
 3. Read ALL source files on the branch
 4. `uv run pytest tests/ -q`
 5. `uv run ruff check codervps tests`
