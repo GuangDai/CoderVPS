@@ -8,7 +8,7 @@ CoderVPS is a Coder-based VPS development environment being refactored from a mo
 
 ## Branch Model
 
-- **`main`** — source code: Python generator (`codervps/`), config (`config/`), Dockerfile (`docker/`), runtime shell modules (`runtime/`), tests, workflows.
+- **`master`** — source code: Python generator (`codervps/`), config (`config/`), Dockerfile (`docker/`), runtime shell modules (`runtime/`), tests, workflows.
 - **`generated`** — publishable output: rendered Terraform JSON, catalogs, extension lists, runtime files. The VPS consumes this branch; it does not run the generator.
 
 ## Legacy Architecture (current state)
@@ -68,94 +68,420 @@ shellcheck runtime/startup.sh runtime/lib/actions.sh runtime/plugins/*.sh
 
 This rule applies to ALL Bash tool calls — both in the main conversation and in subagent prompts. Subagent prompts must include this constraint explicitly.
 
-## Multi-Agent Execution Rules (MANDATORY)
+---
 
-### Overview
+## Git Workflow — Complete Protocol (MANDATORY)
 
-Each implementation task requires **5 rounds** of iterative refinement. Each round runs **5 dev agents** followed by **5 review agents** — all serial, each on its own git branch. No branches are merged into `master` until the **end of Round 5**, when a final review + synthesis selects ONE winning branch to merge.
+This section defines the EXACT git operations for the entire development process. No step may be skipped, abbreviated, or modified.
 
-### Branch Naming Convention
+### Git Safety Rules
+
+1. **NEVER update git config** (no `git config` commands).
+2. **NEVER run destructive commands** (`push --force`, `reset --hard`, `checkout .`, `restore .`, `clean -f`, `branch -D`) without explicit user request — EXCEPT when deleting task branches during cleanup (see Cleanup section).
+3. **NEVER skip hooks** (`--no-verify`, `--no-gpg-sign`) unless user explicitly requests it.
+4. **NEVER force push to master/main** — warn user if they request it.
+5. **ALWAYS create NEW commits** rather than amending.
+6. **ALWAYS stage specific files** (`git add <specific-files>`) — never `git add -A` or `git add .` which can include secrets or binaries.
+7. **ALWAYS use `/bin/rm`** for file deletion, not plain `rm`.
+
+### Git State Tracking
+
+After EVERY git operation, the coordinating agent (main conversation) MUST:
+1. Run `git status --short` to verify working tree state
+2. Run `git branch --show-current` to confirm current branch
+3. Run `git log --oneline -3` to verify commit history
+
+### Branch Creation (Before Each Round)
+
+Before starting a round, create 5 branches from master:
+
+```bash
+# Step 1: Ensure we are on master
+git checkout master
+
+# Step 2: Verify master is clean (no uncommitted changes)
+git status --short
+
+# Step 3: Create 5 branches from master (one command each)
+git branch task{N}-r{R}-agent1 master
+git branch task{N}-r{R}-agent2 master
+git branch task{N}-r{R}-agent3 master
+git branch task{N}-r{R}-agent4 master
+git branch task{N}-r{R}-agent5 master
+
+# Step 4: Verify all branches created and point to same master commit
+git log --oneline -1 task{N}-r{R}-agent1 task{N}-r{R}-agent2 task{N}-r{R}-agent3 task{N}-r{R}-agent4 task{N}-r{R}-agent5
+```
+
+### Dev Agent Lifecycle (Per Agent)
+
+**Before launching the agent**, the coordinating agent MUST:
+1. Verify master is checked out: `git checkout master`
+2. Verify the agent's branch exists: `git branch --contains task{N}-r{R}-agent{A}`
+
+**The agent's internal workflow** (included verbatim in every dev agent prompt):
 
 ```
-task{N}-r{R}-agent{A}   # dev agent branches  (A = 1..5)
-task{N}-r{R}-review{A}  # review agent branches (A = 1..5)
+CRITICAL FIRST STEP: Run `git checkout task{N}-r{R}-agent{A}` before doing anything else.
+
+Bash Execution Rule: ONE command per Bash call, never chain with && or ;.
+
+Workflow:
+1. `git checkout task{N}-r{R}-agent{A}` — switch to your branch
+2. `git log --oneline -3` — verify your starting point
+3. Read existing files on the branch
+4. Implement the task (write/edit code using Write/Edit tools)
+5. `uv sync` — single command, read output
+6. `uv run pytest tests/test_foo.py -q` — single command, all must pass
+7. `uv run ruff check codervps tests` — single command, must be clean
+8. `uv run ruff format --check codervps tests` — single command, must pass
+9. `git add <specific-file-1> <specific-file-2> ...` — stage ONLY changed files by name
+10. `git commit -m "feat: <task description>"` — commit
+11. `git log --oneline -3` — verify your commit is the latest on this branch
+12. Report: branch name, commit hash, files changed, test count passed
 ```
 
-Example: `task1-r1-agent1`, `task1-r1-review1`, `task1-r2-agent3`
+**After the agent completes**, the coordinating agent MUST:
+1. `git checkout master` — switch back to master
+2. `git log task{N}-r{R}-agent{A} --oneline -3` — verify the agent's commit exists on the branch
+3. `git diff master..task{N}-r{R}-agent{A} --stat` — check what files the agent changed
+4. Confirm the agent created exactly one new commit beyond master
+5. Save a brief summary to memory (see Memory Recall section)
 
-### Round Structure (per task)
+### Review Agent Lifecycle (Per Agent)
 
-**Phase A — Dev Agents (5 serial agents, one after another):**
+**Before launching the reviewer**, the coordinating agent MUST:
+1. Verify master is checked out: `git checkout master`
 
-1. Create 5 branches from master: `git branch task{N}-r{R}-agent{1..5} master`
-2. Launch Agent 1 → checks out its branch → implements the task from scratch → commits
-3. Wait for Agent 1 to complete. Verify commit exists on the branch.
-4. Launch Agent 2 → checks out ITS OWN branch → implements the task from scratch → commits
-5. Continue serially through Agent 5.
+**The reviewer's internal workflow** (included verbatim in every review agent prompt):
 
-Each dev agent starts from the SAME master baseline. They do NOT see each other's work. This is "5 people solving the same problem independently."
+```
+CRITICAL FIRST STEP: Run `git checkout task{N}-r{R}-agent{A}` before doing anything else.
 
-**Phase B — Review Agents (5 serial agents, one after another):**
+Bash Execution Rule: ONE command per Bash call, never chain with && or ;.
 
-1. Launch Review Agent 1 → checks out `task{N}-r{R}-agent1` → reviews the code → outputs feedback (does NOT commit code changes)
-2. Launch Review Agent 2 → checks out `task{N}-r{R}-agent2` → reviews → outputs feedback
-3. Continue serially through Review Agent 5.
-
-Each reviewer picks ONE dev agent's branch to review. Reviewers do NOT make commits on the dev branch. They only inspect and report problems, suggestions, and assessment.
-
-### Feedback Flow (between rounds)
-
-After both phases complete, the human (or coordinating agent) synthesizes all review feedback. The NEXT round's dev agents receive:
-
-1. The full review feedback from the previous round
-2. Knowledge of which approaches worked and which didn't across all 5 branches
-3. Instruction to improve upon the best ideas from the previous round
-
-Round 2+ dev agents start from master AGAIN (clean slate), but armed with the synthesized feedback. This is NOT incremental patching — each round is a fresh implementation informed by the previous round's learnings.
-
-### Final Round (Round 5) — Merge Decision
-
-After Round 5's review phase:
-1. Run 5 **analysis agents** — one per branch — that evaluate code quality, spec compliance, and test coverage
-2. Select the BEST branch to merge into master
-3. `git checkout master && git merge task{N}-r5-agent{X}` — only ONE branch merged
-4. Delete all task branches for the completed task
-
-### Per-Agent Workflow (the agent's internal steps)
-
-Each dev agent prompt must include these exact instructions:
-1. `git checkout task{N}-r{R}-agent{A}` — switch to your assigned branch
-2. Read existing files on the branch
-3. Implement the task (write/edit code)
-4. Run `uv sync` (single command)
-5. Run `uv run pytest tests/test_foo.py -q` (single command)
-6. Run `uv run ruff check codervps tests` (single command)
-7. `git add` changed files
-8. `git commit -m "feat: <task description>"`
-
-Each review agent prompt must include these exact instructions:
+Workflow:
 1. `git checkout task{N}-r{R}-agent{A}` — switch to the branch being reviewed
-2. Read all files on the branch
-3. Inspect code quality, spec compliance, test coverage, edge cases
-4. Output a structured review: what's good, what's wrong, specific suggestions
-5. Do NOT make commits — review is read-only
+2. `git log --oneline -3` — verify branch state
+3. Read ALL source files on the branch (using Read tool)
+4. `uv run pytest tests/ -q` — run all tests
+5. `uv run ruff check codervps tests` — lint check
+6. `uv run ruff format --check codervps tests` — format check
+7. Inspect code quality, spec compliance, test coverage, edge cases
+8. Output a STRUCTURED REVIEW containing:
+   - Spec compliance (list each requirement, pass/fail)
+   - Code quality assessment (strengths, issues)
+   - Critical issues (must fix)
+   - Important issues (should fix)
+   - Suggestions (nice to have)
+   - Test quality assessment
+   - Comparison to previous round (if applicable)
+9. Do NOT make commits — review is read-only
+10. `git checkout master` — switch back to master when done
+```
 
-### Serial Execution (MANDATORY)
+**After the reviewer completes**, the coordinating agent MUST:
+1. `git checkout master`
+2. Save the review findings to memory for synthesis (see Memory Recall section)
 
-- **NEVER launch multiple Agent tool calls in parallel.**
-- Each agent runs in foreground. Wait for completion before launching the next.
-- Verify `git log <branch> --oneline -2` after each agent confirms its commit.
+### Between Rounds (Feedback Synthesis)
+
+After ALL 5 dev agents AND ALL 5 review agents complete a round:
+
+1. Synthesize all 5 reviews into one document
+2. Identify the BEST patterns across all 5 branches
+3. Identify the PROBLEMS to avoid across all 5 branches
+4. Save this synthesis to memory
+5. The NEXT round's dev agents receive the synthesis in their prompts
+
+### Round 5 Final Merge
+
+After Round 5's review phase completes:
+
+1. Run 5 analysis agents — one per branch: `git checkout task{N}-r5-agent{A} && read files && output structured evaluation`
+2. Select the single BEST branch based on: test count, code quality, spec compliance, review consensus
+3. Announce which branch was selected and why
+4. Merge to master:
+   ```bash
+   git checkout master
+   git merge task{N}-r5-agent{X} --no-edit
+   ```
+5. If merge conflicts:
+   ```bash
+   # Accept agent's version for conflicting files
+   git checkout --theirs <conflicting-file>
+   git add <conflicting-file>
+   git commit -m "merge: <task description> (Task N - Round 5 converged)"
+   ```
+6. Verify on master:
+   ```bash
+   uv run pytest tests/ -q
+   uv run ruff check codervps tests
+   ```
+7. Delete ALL task branches:
+   ```bash
+   git branch | grep task{N} | xargs git branch -D
+   ```
+8. Update memory: mark task as COMPLETED
 
 ### Cleanup
 
 After a task is fully complete (Round 5 merged):
+
 ```bash
-git branch -D task{N}-r*-agent* task{N}-r*-review*  # delete all branches for this task
+# Make sure we are on master
+git checkout master
+
+# Delete all branches for this task
+git branch | grep "task{N}-" | while read branch; do git branch -D "$branch"; done
 ```
 
-### No Worktree Parallelism
+---
+
+## Multi-Agent Execution Protocol (MANDATORY)
+
+### Task Structure
+
+There are 7 merged tasks (Task A through G). Each task combines 2 original plan tasks. Each task requires exactly **5 rounds**. Each round requires exactly **5 dev agents + 5 review agents**. All agents are **serial** (one at a time, foreground only).
+
+### Merged Task Map
+
+| Task | Original Tasks | Content |
+|------|---------------|---------|
+| Task A | T1+T2 | CLI Skeleton + Models/Config |
+| Task B | T3+T4 | Plugin API + Catalog Refresh |
+| Task C | T5+T6 | Terraform JSON + Runtime Shell |
+| Task D | T7+T8 | Extensions + Dockerfile Matrix |
+| Task E | T9+T10 | Generated Tree + GitHub Actions |
+| Task F | T11+T12 | Thin cdev + Docs |
+| Task G | T13 | Full Validation |
+
+### Branch Naming Convention
+
+```
+task{A}-r{R}-agent{N}     # Dev agents: N=1..5
+task{A}-r{R}-review{N}    # Review agents: N=1..5
+```
+
+Examples: `taskA-r1-agent1`, `taskA-r3-review4`
+
+### Complete Round Execution Checklist
+
+For each task (A through G), for each round (1 through 5):
+
+#### Phase 0: Setup
+- [ ] `git checkout master`
+- [ ] `git status --short` (must be clean)
+- [ ] Create 5 branches: `git branch task{A}-r{R}-agent{1..5} master`
+- [ ] Verify branches: `git log --oneline -1 task{A}-r{R}-agent{1..5}`
+
+#### Phase A: Dev Agents (1→2→3→4→5, serial, foreground)
+- [ ] Launch Agent 1: prompt includes `git checkout task{A}-r{R}-agent1`, task spec, round feedback
+- [ ] Wait for completion. Verify: `git log task{A}-r{R}-agent1 --oneline -2`
+- [ ] `git checkout master`
+- [ ] Save agent result to memory
+- [ ] Launch Agent 2: prompt includes `git checkout task{A}-r{R}-agent2`, task spec, round feedback
+- [ ] Wait for completion. Verify: `git log task{A}-r{R}-agent2 --oneline -2`
+- [ ] `git checkout master`
+- [ ] Save agent result to memory
+- [ ] Launch Agent 3: ... (repeat through Agent 5)
+- [ ] `git checkout master`
+
+#### Phase B: Review Agents (1→2→3→4→5, serial, foreground)
+- [ ] Launch Review Agent 1: prompt includes `git checkout task{A}-r{R}-agent1`, review criteria
+- [ ] Wait for completion. Save review to memory.
+- [ ] `git checkout master`
+- [ ] Launch Review Agent 2: prompt includes `git checkout task{A}-r{R}-agent2`, review criteria
+- [ ] Wait for completion. Save review to memory.
+- [ ] ... (repeat through Review Agent 5)
+- [ ] `git checkout master`
+
+#### Phase C: Synthesis
+- [ ] Compile all 5 reviews into a single synthesis document
+- [ ] Identify best patterns and problems to avoid
+- [ ] Save to memory (this feeds into next round's dev agent prompts)
+- [ ] If this is Round 5: proceed to Final Merge
+- [ ] Otherwise: increment R, go to Phase 0
+
+#### Final Merge (Round 5 only)
+- [ ] Run 5 analysis agents (one per branch)
+- [ ] Select BEST branch
+- [ ] `git checkout master && git merge task{A}-r5-agent{X} --no-edit`
+- [ ] Verify: `uv run pytest tests/ -q`
+- [ ] Delete all task{A} branches
+- [ ] Mark task COMPLETED in memory and task list
+
+---
+
+## Memory Recall Protocol (MANDATORY)
+
+### When to Save Memory
+
+After EVERY agent (dev or review) completes, the coordinating agent MUST save a brief memory entry recording:
+1. Which agent ran (task, round, agent number)
+2. Branch name
+3. Commit hash
+4. Key result (tests passed, lint status, review verdict)
+5. Notable findings or issues
+
+### Memory File Structure
+
+Memory files live at `/home/hp/.claude/projects/-home-hp-Projects-OpenSource-CoderVPS/memory/`.
+
+**After each dev agent:** save to `memory/task{A}-r{R}-agent{N}.md`:
+```
+---
+name: task{A}-r{R}-agent{N}-result
+description: Dev agent {N} round {R} task {A} result
+type: project
+---
+Branch: task{A}-r{R}-agent{N}
+Commit: <hash>
+Tests: N passed
+Approach: <brief description of unique approach>
+Issues: <any problems noted>
+```
+
+**After each review agent:** save to `memory/task{A}-r{R}-review{N}.md`:
+```
+---
+name: task{A}-r{R}-review{N}-result
+description: Review agent {N} round {R} task {A} result
+type: project
+---
+Branch reviewed: task{A}-r{R}-agent{N}
+Verdict: PASS/FAIL
+Critical issues: <list>
+Important issues: <list>
+Best patterns: <list>
+```
+
+**After each round synthesis:** save to `memory/task{A}-r{R}-synthesis.md`:
+```
+---
+name: task{A}-r{R}-synthesis
+description: Round {R} task {A} synthesis of all 5 reviews
+type: project
+---
+Best patterns to adopt:
+- pattern 1
+- pattern 2
+
+Problems to avoid:
+- problem 1
+- problem 2
+
+Agent rankings for this round:
+1. agent N (reason)
+2. ...
+```
+
+### When to Recall Memory
+
+Before launching each new round's dev agents, the coordinating agent MUST:
+1. Read the previous round's synthesis file
+2. Read ALL 5 review files from the previous round
+3. Incorporate findings into the dev agent prompts
+
+### When NOT to Save to Memory
+
+- Do NOT save code patterns, conventions, or file paths (derivable from code)
+- Do NOT save git history or diffs (use git log/diff)
+- Do NOT save anything already in CLAUDE.md
+- Do NOT save ephemeral task details (current conversation context)
+
+---
+
+## Dev Agent Prompt Template
+
+Every dev agent prompt MUST follow this template:
+
+```
+You are Dev Agent {N} of 5 for Task {A} Round {R}.
+
+## CRITICAL FIRST STEP
+Run `git checkout task{A}-r{R}-agent{N}` before doing anything else.
+
+## Bash Execution Rule (MANDATORY)
+NEVER chain multiple commands with `&&` or `;`. Each Bash call = exactly ONE command.
+
+## Context
+[Round {R} feedback synthesis goes here]
+
+## Required Spec
+[Task specification from the plan goes here]
+
+## Verification (each a SINGLE Bash command, in order):
+1. `git checkout task{A}-r{R}-agent{N}`
+2. `git log --oneline -3`
+3. [Read existing files]
+4. [Write implementation]
+5. `uv sync`
+6. `uv run pytest tests/test_foo.py -q`
+7. `uv run ruff check codervps tests`
+8. `uv run ruff format --check codervps tests`
+9. `git add <files>`
+10. `git commit -m "feat: <description>"`
+11. `git log --oneline -3`
+
+## After Completion
+Report: branch name, commit hash, files changed, test count, unique approach.
+
+All paths relative to /home/hp/Projects/OpenSource/CoderVPS.
+```
+
+## Review Agent Prompt Template
+
+Every review agent prompt MUST follow this template:
+
+```
+You are Review Agent {N} of 5 for Task {A} Round {R}.
+
+## CRITICAL FIRST STEP
+Run `git checkout task{A}-r{R}-agent{N}` before doing anything else.
+
+## Bash Execution Rule (MANDATORY)
+NEVER chain multiple commands with `&&` or `;`. Each Bash call = exactly ONE command.
+
+## Review Task
+Review branch `task{A}-r{R}-agent{N}`.
+
+## Instructions:
+1. `git checkout task{A}-r{R}-agent{N}`
+2. `git log --oneline -3`
+3. Read ALL source files on the branch
+4. `uv run pytest tests/ -q`
+5. `uv run ruff check codervps tests`
+6. `uv run ruff format --check codervps tests`
+7. Output STRUCTURED REVIEW:
+   - Spec compliance (each requirement, pass/fail)
+   - Code quality (strengths, issues with severity)
+   - Test quality (coverage, gaps, organization)
+   - Bugs found
+   - Best patterns to adopt
+   - Problems to avoid
+8. Do NOT make commits — read-only review
+9. `git checkout master`
+
+All paths relative to /home/hp/Projects/OpenSource/CoderVPS.
+```
+
+---
+
+## Serial Execution Rule (MANDATORY)
+
+- **NEVER launch multiple Agent tool calls in the same message.**
+- **NEVER use `run_in_background: true` with Agent tool calls.**
+- Each agent runs in **foreground**. Wait for completion before launching the next.
+- Between agents: `git checkout master`, verify state, save memory, then launch next.
+
+---
+
+## No Worktree Parallelism
 
 Never use `isolation: "worktree"` with `run_in_background: true`. Agents write files using absolute paths and will corrupt each other's work if run in parallel.
+
+---
 
 ## Critical Constraints
 
