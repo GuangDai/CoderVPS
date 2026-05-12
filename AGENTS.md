@@ -35,8 +35,31 @@ the final architecture.
 - Runtime persistence should be minimal. Keep external persistence focused on
   the workspace directory; avoid persisting toolchain internals unless a plan
   explicitly justifies it.
+- Treat compiler and package-manager caches as disposable by default. Prefer
+  project-scoped caches inside the workspace when persistence is needed. Do not
+  add cross-workspace shared caches unless the plan explains the isolation,
+  cleanup, and correctness risks.
+- Do not assume nested workspaces or workspace-inside-workspace layouts are
+  valid. Validate this with Coder behavior before designing around it.
 - Toolchain versions should be refreshable from authoritative sources whenever
   practical, instead of being hardcoded by hand.
+- Version catalogs must include legacy and EOL toolchain versions when the
+  upstream source still exposes installable artifacts. Mark them as legacy/EOL
+  in the UI or metadata, but do not remove them only because they are no longer
+  supported.
+- Every generated image must include the system baseline needed for development
+  on that OS family: Git, certificates, shell utilities, SSH client, sudo/user
+  setup, archive tools, and the distro's base build/development package set
+  such as Ubuntu `build-essential`, `pkg-config`, `make`, CMake, and Ninja where
+  appropriate. Language-specific heavyweight toolchains remain configurable, but
+  the base development substrate is mandatory.
+- Language manager and bootstrap tools must be baked into images, not installed
+  from scratch during workspace startup. Examples include `uv`/`uvx` for Python
+  management, Rust bootstrap tooling such as `rustup` and an image-provided
+  Rust compiler/toolchain baseline, and equivalent installers or resolvers for
+  other configurable languages. Workspace startup may resolve and install the
+  user-selected concrete language versions, but it should not spend time
+  installing the managers themselves.
 
 ## Documentation Expectations
 
