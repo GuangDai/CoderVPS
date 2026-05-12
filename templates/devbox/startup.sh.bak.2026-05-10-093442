@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+mkdir -p "$HOME/workspace" "$HOME/.cache" "$HOME/.local/share/code-server/User" "$HOME/.config/code-server"
+
+profile="${DEV_PROFILE:-full}"
+ext_dir="/opt/cde/extensions"
+vsix_dir="/opt/cde/vsix"
+
+lists=("core.txt")
+case "$profile" in
+  core) ;;
+  rust) lists+=("rust.txt") ;;
+  cpp) lists+=("cpp.txt") ;;
+  go) lists+=("go.txt") ;;
+  python) lists+=("python.txt") ;;
+  full) lists+=("rust.txt" "cpp.txt" "go.txt" "python.txt") ;;
+  *) lists+=("rust.txt" "cpp.txt" "go.txt" "python.txt") ;;
+esac
+
+fingerprint() {
+  {
+    for f in "${lists[@]}"; do
+      [[ -f "${ext_dir}/${f}" ]] && cat "${ext_dir}/${f}"
+    done
+    if compgen -G "${vsix_dir}/*.vsix" >/dev/null; then
+      sha256sum "${vsix_dir}"/*.vsix || true
+    fi
+  } | sha256sum | awk '{print $1}'
+}
+
+install_list() {
+  local list="$1"
+  [[ -f "$list" ]] || return 0
+  sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$list" | while read -r ext; do
+    echo "[extensions] install ${ext}"
+    code-server --install-extension "$ext" --force || echo "[extensions] failed: ${ext}"
+  done
+}
+
+state_file="$HOME/.cache/cde-extension-${profile}.sha256"
+fp="$(fingerprint)"
+old=""
+[[ -f "$state_file" ]] && old="$(cat "$state_file")"
+if [[ "$fp" != "$old" ]]; then
+  echo "[extensions] profile=${profile}; installing/updating extension catalog"
+  for f in "${lists[@]}"; do
+    install_list "${ext_dir}/${f}"
+  done
+  if compgen -G "${vsix_dir}/*.vsix" >/dev/null; then
+    for vsix in "${vsix_dir}"/*.vsix; do
+      echo "[extensions] install VSIX ${vsix}"
+      code-server --install-extension "$vsix" --force || echo "[extensions] failed VSIX: ${vsix}"
+    done
+  fi
+  echo "$fp" > "$state_file"
+else
+  echo "[extensions] catalog unchanged; skip"
+fi
+
+settings="$HOME/.local/share/code-server/User/settings.json"
+if [[ ! -s "$settings" ]]; then
+  cat > "$settings" <<'JSON'
+{
+  "editor.formatOnSave": false,
+  "terminal.integrated.defaultProfile.linux": "bash",
+  "rust-analyzer.check.command": "clippy",
+  "clangd.arguments": ["--background-index", "--clang-tidy"],
+  "python.defaultInterpreterPath": "/usr/bin/python3",
+  "go.toolsManagement.autoUpdate": true
+}
+JSON
+fi
+
+cat > "$HOME/.config/code-server/config.yaml" <<'YAML'
+bind-addr: 127.0.0.1:13337
+auth: none
+cert: false
+YAML
+
+pkill -f 'code-server.*13337' >/dev/null 2>&1 || true
+nohup code-server --auth none --bind-addr 127.0.0.1:13337 "$HOME/workspace" > "$HOME/.cache/code-server.log" 2>&1 &

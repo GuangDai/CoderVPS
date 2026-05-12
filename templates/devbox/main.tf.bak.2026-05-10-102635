@@ -1,0 +1,280 @@
+terraform {
+  required_providers {
+    coder = {
+      source = "coder/coder"
+    }
+    docker = {
+      source = "kreuzwerker/docker"
+    }
+  }
+}
+
+provider "coder" {}
+provider "docker" {}
+
+data "coder_workspace" "me" {}
+data "coder_workspace_owner" "me" {}
+data "coder_provisioner" "me" {}
+
+data "coder_parameter" "profile" {
+  name         = "profile"
+  display_name = "Tool/plugin profile"
+  description  = "Controls which shared extension lists are installed at workspace startup. Toolchain stays in the image; Rust version should still be pinned by rust-toolchain.toml per project."
+  default      = "full"
+  mutable      = true
+  option {
+    name  = "Full: Rust + C++ + Go + Python"
+    value = "full"
+  }
+  option {
+    name  = "Rust"
+    value = "rust"
+  }
+  option {
+    name  = "C/C++"
+    value = "cpp"
+  }
+  option {
+    name  = "Go"
+    value = "go"
+  }
+  option {
+    name  = "Python"
+    value = "python"
+  }
+  option {
+    name  = "Core only"
+    value = "core"
+  }
+}
+
+data "coder_parameter" "memory_gb" {
+  name         = "memory_gb"
+  display_name = "Memory"
+  description  = "Container memory limit. Your VPS has 8G, so 4G is a good default."
+  default      = "4"
+  mutable      = true
+  option {
+    name  = "2 GB"
+    value = "2"
+  }
+  option {
+    name  = "4 GB"
+    value = "4"
+  }
+  option {
+    name  = "6 GB"
+    value = "6"
+  }
+  option {
+    name  = "8 GB"
+    value = "8"
+  }
+}
+
+data "coder_parameter" "docker_socket" {
+  name         = "docker_socket"
+  display_name = "Mount host Docker socket"
+  description  = "Powerful but risky. Enable only when the workspace must run Docker/Compose on the host daemon."
+  default      = "false"
+  mutable      = false
+  option {
+    name  = "No"
+    value = "false"
+  }
+  option {
+    name  = "Yes"
+    value = "true"
+  }
+}
+
+locals {
+  username         = data.coder_workspace_owner.me.name
+  workspace_name   = lower(data.coder_workspace.me.name)
+  container_name   = "coder-${local.username}-${local.workspace_name}"
+  host_root        = "/opt/coder-cde"
+  host_docker_gid  = "988"
+  mem_bytes        = tonumber(data.coder_parameter.memory_gb.value) * 1024 * 1024 * 1024
+}
+
+resource "coder_agent" "main" {
+  arch = data.coder_provisioner.me.arch
+  os   = "linux"
+  dir  = "/home/coder/workspace"
+
+  env = {
+    GIT_AUTHOR_NAME     = coalesce(data.coder_workspace_owner.me.full_name, data.coder_workspace_owner.me.name)
+    GIT_AUTHOR_EMAIL    = data.coder_workspace_owner.me.email
+    GIT_COMMITTER_NAME  = coalesce(data.coder_workspace_owner.me.full_name, data.coder_workspace_owner.me.name)
+    GIT_COMMITTER_EMAIL = data.coder_workspace_owner.me.email
+  }
+
+  startup_script = file("${path.module}/startup.sh")
+
+  metadata {
+    display_name = "CPU"
+    key          = "0_cpu"
+    script       = "coder stat cpu"
+    interval     = 10
+    timeout      = 1
+  }
+  metadata {
+    display_name = "Memory"
+    key          = "1_mem"
+    script       = "coder stat mem"
+    interval     = 10
+    timeout      = 1
+  }
+  metadata {
+    display_name = "Disk"
+    key          = "2_disk"
+    script       = "coder stat disk --path $HOME"
+    interval     = 60
+    timeout      = 1
+  }
+}
+
+resource "coder_app" "code_server" {
+  agent_id     = coder_agent.main.id
+  slug         = "code-server"
+  display_name = "VS Code Web"
+  icon         = "/icon/code.svg"
+  url          = "http://127.0.0.1:13337/?folder=/home/coder/workspace"
+  share        = "owner"
+  subdomain    = false
+
+  healthcheck {
+    url       = "http://127.0.0.1:13337/healthz"
+    interval  = 5
+    threshold = 20
+  }
+}
+
+resource "docker_volume" "home" {
+  name = "coder-${data.coder_workspace.me.id}-home"
+  lifecycle { ignore_changes = all }
+  labels {
+    label = "coder.owner"
+    value = data.coder_workspace_owner.me.name
+  }
+  labels {
+    label = "coder.workspace_id"
+    value = data.coder_workspace.me.id
+  }
+}
+
+resource "docker_container" "workspace" {
+  count    = data.coder_workspace.me.start_count
+  image    = "coder-devbox:latest"
+  name     = local.container_name
+  hostname = data.coder_workspace.me.name
+  restart  = "unless-stopped"
+  memory   = local.mem_bytes
+
+  entrypoint = ["sh", "-c", replace(coder_agent.main.init_script, "/localhost|127\\.0\\.0\\.1/", "host.docker.internal")]
+
+  env = [
+    "CODER_AGENT_TOKEN=${coder_agent.main.token}",
+    "DEV_PROFILE=${data.coder_parameter.profile.value}",
+    "PATH=/home/coder/.local/bin:/usr/local/go/bin:/usr/local/cargo/bin:/home/coder/go/bin:/usr/local/bin:/usr/bin:/bin"
+  ]
+
+  host {
+    host = "host.docker.internal"
+    ip   = "host-gateway"
+  }
+
+  volumes {
+    container_path = "/home/coder"
+    volume_name    = docker_volume.home.name
+    read_only      = false
+  }
+
+  volumes {
+    host_path      = "/opt/coder-cde/extensions"
+    container_path = "/opt/cde/extensions"
+    read_only      = true
+  }
+
+  volumes {
+    host_path      = "/opt/coder-cde/vsix"
+    container_path = "/opt/cde/vsix"
+    read_only      = true
+  }
+
+  dynamic "volumes" {
+    for_each = data.coder_parameter.docker_socket.value == "true" ? [1] : []
+    content {
+      host_path      = "/var/run/docker.sock"
+      container_path = "/var/run/docker.sock"
+      read_only      = false
+    }
+  }
+
+  group_add = [local.host_docker_gid]
+
+  capabilities {
+    add = ["SYS_PTRACE"]
+  }
+  security_opts = ["seccomp=unconfined"]
+
+  labels {
+    label = "coder.owner"
+    value = data.coder_workspace_owner.me.name
+  }
+  labels {
+    label = "coder.workspace_id"
+    value = data.coder_workspace.me.id
+  }
+  labels {
+    label = "coder.workspace_name"
+    value = data.coder_workspace.me.name
+  }
+}
+
+
+# Added by cdev patch-code-server.
+resource "coder_script" "code_server" {
+  agent_id           = coder_agent.main.id
+  display_name       = "Start code-server"
+  icon               = "/icon/code.svg"
+  run_on_start       = true
+  start_blocks_login = false
+
+  script = <<-EOT
+# CDEV_CODE_SERVER_LAUNCH_BEGIN
+echo "[code-server] launching on 127.0.0.1:13337"
+mkdir -p /home/coder/workspace /home/coder/.config/code-server /home/coder/.local/share/code-server
+
+# Kill only the app server bound to 13337.
+pkill -f "code-server.*13337" 2>/dev/null || true
+
+cat > /home/coder/.config/code-server/config.yaml <<'YAML'
+bind-addr: 127.0.0.1:13337
+auth: none
+cert: false
+YAML
+
+nohup code-server \
+  --bind-addr 127.0.0.1:13337 \
+  --auth none \
+  /home/coder/workspace \
+  > /tmp/code-server.log 2>&1 < /dev/null &
+
+# Do not make the whole workspace fail if the first health check is slow.
+for i in $(seq 1 20); do
+  if curl -fsS http://127.0.0.1:13337/healthz >/dev/null 2>&1 || curl -fsS http://127.0.0.1:13337/ >/dev/null 2>&1; then
+    echo "[code-server] ready"
+    break
+  fi
+  sleep 1
+done
+
+if ! pgrep -f "code-server.*13337" >/dev/null; then
+  echo "[code-server] failed to start; log follows"
+  tail -200 /tmp/code-server.log || true
+  # Keep startup script non-fatal so the workspace app/proxy can retry.
+fi
+# CDEV_CODE_SERVER_LAUNCH_END
+  EOT
+}

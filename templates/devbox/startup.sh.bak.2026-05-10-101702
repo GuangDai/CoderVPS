@@ -1,0 +1,136 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+mkdir -p "$HOME/workspace" "$HOME/.cache" "$HOME/.local/share/code-server/User" "$HOME/.config/code-server"
+
+profile="${DEV_PROFILE:-full}"
+ext_dir="/opt/cde/extensions"
+vsix_dir="/opt/cde/vsix"
+
+settings="$HOME/.local/share/code-server/User/settings.json"
+if [[ ! -s "$settings" ]]; then
+  cat > "$settings" <<'JSON'
+{
+  "editor.formatOnSave": false,
+  "terminal.integrated.defaultProfile.linux": "bash",
+  "rust-analyzer.check.command": "clippy",
+  "clangd.arguments": ["--background-index", "--clang-tidy"],
+  "python.defaultInterpreterPath": "/usr/bin/python3",
+  "go.toolsManagement.autoUpdate": true
+}
+JSON
+fi
+
+cat > "$HOME/.config/code-server/config.yaml" <<'YAML'
+bind-addr: 127.0.0.1:13337
+auth: none
+cert: false
+YAML
+
+echo "[code-server] checking 127.0.0.1:13337"
+
+if curl -fsS http://127.0.0.1:13337/healthz >/dev/null 2>&1 || \
+   curl -fsS http://127.0.0.1:13337/ >/dev/null 2>&1; then
+  echo "[code-server] already running"
+else
+  echo "[code-server] starting"
+  setsid code-server \
+    --auth none \
+    --bind-addr 127.0.0.1:13337 \
+    "$HOME/workspace" \
+    > "$HOME/.cache/code-server.log" 2>&1 < /dev/null &
+fi
+
+# Give code-server a short chance to come up, but never fail workspace startup.
+for i in $(seq 1 10); do
+  if curl -fsS http://127.0.0.1:13337/healthz >/dev/null 2>&1 || \
+     curl -fsS http://127.0.0.1:13337/ >/dev/null 2>&1; then
+    echo "[code-server] ready"
+    break
+  fi
+  sleep 1
+done
+
+cat > "$HOME/.cache/cde-install-extensions.sh" <<'EOS'
+#!/usr/bin/env bash
+set -uo pipefail
+
+profile="${DEV_PROFILE:-full}"
+ext_dir="/opt/cde/extensions"
+vsix_dir="/opt/cde/vsix"
+
+mkdir -p "$HOME/.cache" "$HOME/.local/share/code-server/User"
+
+lists=("core.txt")
+case "$profile" in
+  core) ;;
+  rust) lists+=("rust.txt") ;;
+  cpp) lists+=("cpp.txt") ;;
+  go) lists+=("go.txt") ;;
+  python) lists+=("python.txt") ;;
+  full) lists+=("rust.txt" "cpp.txt" "go.txt" "python.txt") ;;
+  *) lists+=("rust.txt" "cpp.txt" "go.txt" "python.txt") ;;
+esac
+
+fingerprint() {
+  {
+    for f in "${lists[@]}"; do
+      [[ -f "${ext_dir}/${f}" ]] && cat "${ext_dir}/${f}"
+    done
+    if compgen -G "${vsix_dir}/*.vsix" >/dev/null; then
+      sha256sum "${vsix_dir}"/*.vsix || true
+    fi
+  } | sha256sum | awk '{print $1}'
+}
+
+install_list() {
+  local list="$1"
+  [[ -f "$list" ]] || return 0
+
+  sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$list" | while read -r ext; do
+    echo "[extensions] install ${ext}"
+    code-server --install-extension "$ext" --force || echo "[extensions] failed: ${ext}"
+  done
+}
+
+lockdir="$HOME/.cache/cde-extension-install.lock"
+if ! mkdir "$lockdir" 2>/dev/null; then
+  echo "[extensions] another installer is running; skip"
+  exit 0
+fi
+trap 'rmdir "$lockdir" 2>/dev/null || true' EXIT
+
+state_file="$HOME/.cache/cde-extension-${profile}.sha256"
+fp="$(fingerprint)"
+old=""
+[[ -f "$state_file" ]] && old="$(cat "$state_file")"
+
+if [[ "$fp" != "$old" ]]; then
+  echo "[extensions] profile=${profile}; installing/updating extension catalog"
+
+  for f in "${lists[@]}"; do
+    install_list "${ext_dir}/${f}"
+  done
+
+  if compgen -G "${vsix_dir}/*.vsix" >/dev/null; then
+    for vsix in "${vsix_dir}"/*.vsix; do
+      echo "[extensions] install VSIX ${vsix}"
+      code-server --install-extension "$vsix" --force || echo "[extensions] failed VSIX: ${vsix}"
+    done
+  fi
+
+  echo "$fp" > "$state_file"
+else
+  echo "[extensions] catalog unchanged; skip"
+fi
+
+exit 0
+EOS
+
+chmod +x "$HOME/.cache/cde-install-extensions.sh"
+
+# Install extensions in the background. Never block or fail the workspace startup.
+setsid bash "$HOME/.cache/cde-install-extensions.sh" \
+  > "$HOME/.cache/cde-extension-install.log" 2>&1 < /dev/null &
+
+exit 0

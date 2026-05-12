@@ -1,0 +1,34 @@
+FROM codercom/enterprise-base:ubuntu
+
+USER root
+ENV DEBIAN_FRONTEND=noninteractive
+ENV RUSTUP_HOME=/usr/local/rustup
+ENV CARGO_HOME=/usr/local/cargo
+ENV GOPATH=/home/coder/go
+ENV PATH=/usr/local/go/bin:/usr/local/cargo/bin:/home/coder/go/bin:/home/coder/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+RUN apt-get update && apt-get install -y --no-install-recommends     bash ca-certificates curl git gnupg jq unzip zip tar xz-utils file     build-essential pkg-config cmake ninja-build make autoconf automake libtool     clang clangd clang-format lld lldb gdb     python3 python3-pip python3-venv python3-dev pipx     ripgrep fd-find htop procps tree openssh-client sudo locales     libssl-dev zlib1g-dev     && (apt-get install -y --no-install-recommends docker-ce-cli docker-buildx-plugin docker-compose-plugin || true)     && rm -rf /var/lib/apt/lists/*
+
+RUN curl -fsSL https://code-server.dev/install.sh | sh
+
+RUN curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal --default-toolchain stable     && /usr/local/cargo/bin/rustup component add rustfmt clippy rust-src     && chmod -R a+w /usr/local/rustup /usr/local/cargo
+
+ARG GO_VERSION=1.26.3
+RUN set -eux; \
+    curl -fsSLo /tmp/go.tgz "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz"; \
+    rm -rf /usr/local/go; \
+    tar -C /usr/local -xzf /tmp/go.tgz; \
+    rm /tmp/go.tgz; \
+    /usr/local/go/bin/go version
+
+RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh     && chmod +x /usr/local/bin/uv /usr/local/bin/uvx     && python3 -m pip install --break-system-packages --upgrade pip pytest debugpy ipykernel ruff || true
+
+RUN (curl -fsSL https://xmake.io/shget.text | bash || true)     && if [ -x /root/.local/bin/xmake ]; then ln -sf /root/.local/bin/xmake /usr/local/bin/xmake; fi
+ENV PATH=/home/coder/.local/bin:/usr/local/go/bin:/usr/local/cargo/bin:/home/coder/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+RUN mkdir -p /home/coder/workspace /home/coder/go /home/coder/.local/bin     && chown -R coder:coder /home/coder
+
+USER coder
+WORKDIR /home/coder/workspace
+ENV PATH=/home/coder/.local/bin:/usr/local/go/bin:/usr/local/cargo/bin:/home/coder/go/bin:/usr/local/bin:/usr/bin:/bin
+RUN go install golang.org/x/tools/gopls@latest     && go install github.com/go-delve/delve/cmd/dlv@latest     || true

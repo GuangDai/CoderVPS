@@ -1,0 +1,3 @@
+llvm-vs-code-extensions.vscode-clangd
+vadimcn.vscode-lldb
+tboox.xmake-vscode
