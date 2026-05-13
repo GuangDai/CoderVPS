@@ -1,0 +1,23 @@
+[core]
+marketplace = ["EditorConfig.EditorConfig", "redhat.vscode-yaml"]
+
+[language.python]
+marketplace = ["ms-python.python", "ms-python.debugpy", "charliermarsh.ruff"]
+
+[language.rust]
+marketplace = ["rust-lang.rust-analyzer", "vadimcn.vscode-lldb"]
+
+[language.go]
+marketplace = ["golang.Go"]
+
+[language.cpp]
+marketplace = [
+  "llvm-vs-code-extensions.vscode-clangd",
+  "vadimcn.vscode-lldb",
+  "tboox.xmake-vscode"
+]
+
+[packs.leetcode]
+label = "LeetCode"
+marketplace = ["leetcode.vscode-leetcode"]
+vsix_globs = ["packs/leetcode/*.vsix"]

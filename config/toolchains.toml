@@ -1,0 +1,38 @@
+[project]
+arch = "linux/amd64"
+
+[node]
+majors = [24, 22, 20, 18, 16]
+
+[plugins]
+enabled = ["python", "rust", "go", "cpp"]
+
+[versions.override]
+uv = ""
+code_server = ""
+sccache = ""
+rust_bootstrap = ""
+llvm_prebundle = ""
+
+[python]
+min_minor = "3.6"
+max_minor = "latest"
+default = "3.13"
+default_tools = ["ruff", "debugpy"]
+optional_tools = ["ipython", "jupyter"]
+
+[rust]
+stable_minor_count = 30
+default = "stable"
+default_components = ["rustfmt", "clippy", "rust-src"]
+use_sccache = true
+
+[go]
+minor_count = 20
+default = "latest"
+default_tools = ["gopls"]
+
+[cpp]
+default_llvm = "latest"
+prebundle = "latest"
+default_tools = ["xmake", "ccache"]
