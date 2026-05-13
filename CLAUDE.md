@@ -394,7 +394,7 @@ Before launching each new round's dev agents, the coordinating agent MUST:
 
 ## Dev Agent Prompt Template
 
-Every dev agent prompt MUST follow this template:
+Every dev agent prompt MUST follow this template. Copy it VERBATIM, filling in only the bracketed placeholders. Do not omit any section.
 
 ```
 You are Dev Agent {N} of 5 for Task {A} Round {R}.
@@ -405,34 +405,59 @@ Run `git checkout task{A}-r{R}-agent{N}` before doing anything else.
 ## Bash Execution Rule (MANDATORY)
 NEVER chain multiple commands with `&&` or `;`. Each Bash call = exactly ONE command.
 
+## MANDATORY READING (do this FIRST, before any code changes)
+
+Use the Read tool to read these 3 files in full:
+1. /home/hp/Projects/OpenSource/CoderVPS/CLAUDE.md — project instructions, git protocol, constraints
+2. /home/hp/Projects/OpenSource/CoderVPS/docs/superpowers/specs/2026-05-12-codervps-refactor-design.md — full design spec
+3. /home/hp/Projects/OpenSource/CoderVPS/docs/superpowers/plans/2026-05-12-codervps-refactor.md — complete implementation plan
+
+Do NOT skip any file. Do NOT skim. Read all three completely.
+You MUST finish reading all 3 files before writing any code.
+
 ## Context
-[Round {R} feedback synthesis goes here]
+[Round {R} feedback synthesis goes here. For Round 1: "This is Round 1. No prior round feedback exists. Read the docs carefully and implement from scratch with your best engineering judgment."]
 
-## Required Spec
-[Task specification from the plan goes here]
+## Task Specification
+[Exact spec from the plan: which files to create/modify, API signatures, TOML config content, test code. Include relevant portions VERBATIM from the plan — do not summarize.]
 
-## Verification (each a SINGLE Bash command, in order):
+## Git Safety Reminder
+- NEVER update git config
+- NEVER run destructive commands (reset --hard, checkout ., clean -f)
+- ALWAYS create a NEW commit (never amend)
+- ALWAYS stage specific files by name (never git add -A or git add .)
+- Commit message format: "feat: <description>" with Co-Authored-By footer
+
+## Verification Checklist (each a SINGLE Bash command, in order):
 1. `git checkout task{A}-r{R}-agent{N}`
 2. `git log --oneline -10`
-3. [Read existing files]
-4. [Write implementation]
-5. `uv sync`
-6. `uv run pytest tests/test_foo.py -q`
-7. `uv run ruff check codervps tests`
-8. `uv run ruff format --check codervps tests`
-9. `git add <files>`
-10. `git commit -m "feat: <description>"`
-11. `git log --oneline -10`
+3. [Read the 3 mandatory files using Read tool]
+4. [Read existing source files on the branch using Read tool]
+5. [Write implementation using Write/Edit tools]
+6. `uv sync`
+7. `uv run pytest tests/test_foo.py -q` (all must pass)
+8. `uv run ruff check codervps tests` (must be clean)
+9. `uv run ruff format --check codervps tests` (must pass)
+10. `git status --short` (verify only intended files changed)
+11. `git add <specific-file-1> <specific-file-2> ...` (stage ONLY changed files by name)
+12. `git commit -m "feat: <description>"` (with Co-Authored-By footer)
+13. `git log --oneline -5` (verify your commit is the latest)
+14. `git status --short` (MUST be clean — no uncommitted changes)
 
-## After Completion
-Report: branch name, commit hash, files changed, test count, unique approach.
+## After Completion — Required Report
+Report ALL of:
+- Branch name: task{A}-r{R}-agent{N}
+- Full commit hash: <40-char hash>
+- Files changed (with +additions/-deletions counts):
+- Tests passed: <number>
+- Unique approach: <one sentence>
 
 All paths relative to /home/hp/Projects/OpenSource/CoderVPS.
 ```
 
 ## Review Agent Prompt Template
 
-Every review agent prompt MUST follow this template:
+Every review agent prompt MUST follow this template. Copy it VERBATIM, filling in only the bracketed placeholders.
 
 ```
 You are Review Agent {N} of 5 for Task {A} Round {R}.
@@ -443,25 +468,38 @@ Run `git checkout task{A}-r{R}-agent{N}` before doing anything else.
 ## Bash Execution Rule (MANDATORY)
 NEVER chain multiple commands with `&&` or `;`. Each Bash call = exactly ONE command.
 
-## Review Task
-Review branch `task{A}-r{R}-agent{N}`.
+## MANDATORY READING (do this FIRST, before any review)
 
-## Instructions:
+Use the Read tool to read these 3 files in full:
+1. /home/hp/Projects/OpenSource/CoderVPS/CLAUDE.md — project instructions, git protocol, constraints
+2. /home/hp/Projects/OpenSource/CoderVPS/docs/superpowers/specs/2026-05-12-codervps-refactor-design.md — full design spec
+3. /home/hp/Projects/OpenSource/CoderVPS/docs/superpowers/plans/2026-05-12-codervps-refactor.md — complete implementation plan (especially the task section you are reviewing)
+
+Do NOT skip any file. Do NOT skim. Read all three completely.
+You MUST know the full spec before you can judge compliance.
+
+## Review Task
+Review branch `task{A}-r{R}-agent{N}` for spec compliance, code quality, and test coverage.
+
+## Review Protocol:
 1. `git checkout task{A}-r{R}-agent{N}`
-2. `git log --oneline -10`
-3. Read ALL source files on the branch
-4. `uv run pytest tests/ -q`
-5. `uv run ruff check codervps tests`
-6. `uv run ruff format --check codervps tests`
-7. Output STRUCTURED REVIEW:
-   - Spec compliance (each requirement, pass/fail)
-   - Code quality (strengths, issues with severity)
-   - Test quality (coverage, gaps, organization)
-   - Bugs found
-   - Best patterns to adopt
-   - Problems to avoid
-8. Do NOT make commits — read-only review
-9. `git checkout master`
+2. `git log --oneline -10` (verify branch state)
+3. Read the 3 mandatory files using Read tool
+4. Read ALL source files on the branch using Read tool
+5. `uv run pytest tests/ -q` (run all tests)
+6. `uv run ruff check codervps tests` (lint check)
+7. `uv run ruff format --check codervps tests` (format check)
+8. Output STRUCTURED REVIEW containing ALL of:
+   - **Spec Compliance** — list each requirement from the plan, mark pass/fail with evidence
+   - **Code Quality** — strengths and issues with severity (critical/important/minor)
+   - **Test Quality** — coverage, gaps, organization, whether tests match the plan's test code
+   - **Bugs Found** — any logic errors, missing edge cases, wrong API usage
+   - **Best Patterns** — what this agent did well that others should adopt
+   - **Problems to Avoid** — what this agent did that others should NOT replicate
+   - **Consistency Check** — does the code align with the design doc and plan, or does it invent different APIs/types/configs?
+9. Do NOT make commits — review is read-only
+10. `git checkout master`
+11. Report: branch reviewed, verdict (PASS/FAIL), critical issues count, important issues count
 
 All paths relative to /home/hp/Projects/OpenSource/CoderVPS.
 ```
@@ -498,3 +536,164 @@ Never use `isolation: "worktree"` with `run_in_background: true`. Agents write f
 ## Refactor Workflow
 
 When implementing the refactor, follow the design doc and implementation plan in `docs/superpowers/`. Read the relevant documentation before changing code — do not implement from memory when a plan or design document exists. Keep commits small and intentional; commit documentation, plans, and code changes separately.
+
+---
+
+## Agent Mandatory Reading List (NON-NEGOTIABLE)
+
+**Every agent (dev, review, or analysis) MUST read these files IN FULL before doing any other work.** The agent's prompt will list them; the agent MUST use the Read tool to read every one. No exceptions, no shortcuts, no "I already know this from the prompt."
+
+### Required Reading (in order)
+
+1. **`/home/hp/Projects/OpenSource/CoderVPS/CLAUDE.md`** — the complete project instructions, git protocol, and constraints
+2. **`/home/hp/Projects/OpenSource/CoderVPS/docs/superpowers/specs/2026-05-12-codervps-refactor-design.md`** — the full design specification with all architectural decisions, constraints, and risk review
+3. **`/home/hp/Projects/OpenSource/CoderVPS/docs/superpowers/plans/2026-05-12-codervps-refactor.md`** — the complete 13-task implementation plan with file structures, code patterns, and test specifications
+
+### Why This Is Mandatory
+
+- The prompt is a **pointer** to the task, not a replacement for the full spec. It gives context but cannot contain every detail.
+- Agents that skip the docs miss critical constraints, implement wrong APIs, use wrong types, or violate workspace isolation rules.
+- The design doc contains 700+ lines of architectural decisions, data flow rules, and risk mitigations. No prompt can summarize all of them.
+- The implementation plan contains exact file paths, TOML config formats, dataclass field lists, and test code. Agents must match these exactly, not invent variants.
+- Consistency across 5 independent agents requires all of them to read the same source documents.
+
+### Reading Verification
+
+The coordinating agent MUST include this requirement in every agent prompt:
+
+```
+## MANDATORY READING (do this FIRST, before any code changes)
+
+Use the Read tool to read these files in full:
+1. /home/hp/Projects/OpenSource/CoderVPS/CLAUDE.md
+2. /home/hp/Projects/OpenSource/CoderVPS/docs/superpowers/specs/2026-05-12-codervps-refactor-design.md
+3. /home/hp/Projects/OpenSource/CoderVPS/docs/superpowers/plans/2026-05-12-codervps-refactor.md
+
+You MUST read ALL three files completely. Do not skim. Do not skip sections.
+Only after reading all three may you proceed to implementation.
+```
+
+The agent's first action after `git checkout` MUST be reading these three files. The agent must not write any code before completing all three reads.
+
+---
+
+## Git Data Integrity Protocol (MANDATORY)
+
+### Before Any Agent Work — Branch Snapshot
+
+Before launching ANY agent, the coordinating agent MUST record:
+
+```bash
+git log --oneline -10 > /tmp/pre-agent-snapshot.txt
+git status --short >> /tmp/pre-agent-snapshot.txt
+git branch --show-current >> /tmp/pre-agent-snapshot.txt
+```
+
+### Agent's Git Commit Requirements
+
+Every dev agent MUST produce exactly ONE commit that:
+- Has a descriptive `feat:` / `fix:` / `refactor:` prefix
+- Mentions the task and round in the body (e.g., "Task A Round 1")
+- Is signed with `Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>`
+- Leaves the branch in a clean state (no uncommitted changes, no untracked files outside intended additions)
+
+### After Any Agent Work — Verification Chain
+
+After EVERY agent (dev or review) completes, the coordinating agent MUST run these checks in order:
+
+```bash
+# 1. Switch back to master
+git checkout master
+
+# 2. Verify the agent's branch has new commits
+git log task{A}-r{R}-agent{N} --oneline -5
+
+# 3. Verify the branch differs from master
+git diff master..task{A}-r{R}-agent{N} --stat
+
+# 4. Verify master is still clean
+git status --short
+
+# 5. Verify the branch log shows exactly 1 new commit (for dev agents)
+git log master..task{A}-r{R}-agent{N} --oneline
+```
+
+If any check fails:
+- Do NOT proceed to the next agent
+- Diagnose the issue
+- If the agent's branch is missing commits, the agent may have failed to commit — check the agent's output
+- If master is dirty, clean it before proceeding
+
+### Branch Preservation
+
+- **NEVER delete an agent's branch** until the task is fully complete (Round 5 merged to master)
+- **NEVER force-overwrite a branch** — if an agent fails, create a new branch with a different name (e.g., `taskA-r1-agent1-retry`)
+- All task branches remain in `git branch` output as a permanent record until cleanup
+- The coordinating agent must be able to `git log` any agent branch at any time to trace what happened
+
+### Recovery Procedure
+
+If an agent fails partway through:
+1. Do NOT delete its branch
+2. `git checkout master`
+3. Create a NEW branch: `git branch task{A}-r{R}-agent{N}-retry{M} master`
+4. Launch a new agent on the retry branch with the same task spec
+5. Keep the original failed branch for forensic comparison
+
+---
+
+## Agent Prompt — Complete Required Sections
+
+Every agent prompt MUST include ALL of these sections. No section may be omitted.
+
+### Section Order (fixed)
+
+1. **Agent Identity** — who this agent is (task, round, number, role)
+2. **CRITICAL FIRST STEP** — the exact `git checkout` command
+3. **Bash Execution Rule** — one command per Bash call
+4. **MANDATORY READING** — the three files that MUST be read first
+5. **Context** — round feedback synthesis from previous rounds (Round 1 only: "This is Round 1. No prior round feedback exists. Read the docs carefully and implement from scratch.")
+6. **Required Spec** — exact task specification with file lists, API signatures, test requirements
+7. **Git Safety Reminder** — condensed git rules (no config, no destructive, new commits only, specific files only)
+8. **Verification Checklist** — exact sequence of commands the agent must run
+9. **Output Requirements** — what the agent must report when done
+
+### Prompt Size and Detail
+
+- Prompts must be **self-contained** — the agent should not need to ask clarifying questions
+- Include exact file paths, function signatures, and test expectations
+- Include the specific TOML config content if the task creates config files
+- Include the specific test code if the plan provides it
+- DO NOT summarize the spec — include the relevant portions verbatim from the plan
+
+---
+
+## Traceability Audit Trail
+
+After EVERY agent completes, the coordinating agent MUST write a memory file recording:
+
+```
+---
+name: task{A}-r{R}-agent{N}-result
+description: Dev agent {N} round {R} task {A} result
+type: project
+---
+Branch: task{A}-r{R}-agent{N}
+Commit: <full 40-char hash>
+Short hash: <7-char hash>
+Parent commit: <parent hash>
+Tests passed: <number>
+Lint: clean/failed
+Format: clean/failed
+Files changed:
+  - <file path> (+<additions> -<deletions>)
+Approach: <one sentence describing unique approach>
+Issues: <any problems, or "none">
+```
+
+This audit trail MUST be complete for all 50 agents per task (5 rounds × 10 agents). It provides:
+- Full traceability: which commit came from which agent
+- Reproducibility: what each agent did differently
+- Debugging: if master breaks after Round 5 merge, we can trace back to the source branch
+
+The coordinating agent must NEVER skip a memory save. If context is low, save a minimal entry with at least: branch, commit hash, tests passed.
