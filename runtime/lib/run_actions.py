@@ -1,7 +1,7 @@
-"""CoderVPS runtime action executor.
+"""Runtime action executor for CoderVPS workspace startup.
 
-Reads a JSON action plan, executes each action with idempotency guarantees,
-and enforces workspace path isolation.
+Executes a JSON runtime plan with 9 action types. All writes are strictly
+scoped to paths under /workspace/.cdev (except for code-server user config).
 """
 
 from __future__ import annotations
@@ -17,172 +17,149 @@ import tempfile
 from pathlib import Path
 from urllib.request import urlopen
 
-# Default runtime root; overridable via CDEV_RUNTIME_ROOT env var.
 CDEV_RUNTIME_ROOT = Path(os.environ.get("CDEV_RUNTIME_ROOT", "/workspace/.cdev"))
 STATE_ROOT = CDEV_RUNTIME_ROOT / "state"
 TMP_ROOT = CDEV_RUNTIME_ROOT / "tmp"
 
 
 def inside_allowed_root(path: str) -> bool:
-    """Return True if *path* is within a writable workspace area."""
+    """Check if a path is within the allowed workspace roots."""
     resolved = Path(path).resolve().as_posix()
     return (
-        resolved.startswith("/workspace/.cdev/")
-        or resolved == "/workspace/.cdev"
+        resolved.startswith((CDEV_RUNTIME_ROOT / "").as_posix())
+        or resolved == CDEV_RUNTIME_ROOT.as_posix()
         or resolved.startswith("/home/coder/.local/share/code-server/")
         or resolved.startswith("/home/coder/.config/code-server/")
     )
 
 
 def require_workspace_path(path: str) -> Path:
-    """Validate and return a workspace-resident path.
-
-    Raises SystemExit if the path is outside the allowed workspace roots.
-    """
+    """Validate that the path is within the allowed workspace root."""
     if not inside_allowed_root(path):
         raise SystemExit(f"refusing non-workspace path: {path}")
     return Path(path)
 
 
 def state_marker(action_id: str) -> Path:
-    """Return the marker file path that records completion of an action."""
+    """Return the path to the state marker file for an action."""
     return STATE_ROOT / f"{action_id}.done"
 
 
 def verify_sha256(path: Path, expected: str) -> None:
-    """Verify the SHA-256 digest of *path* matches *expected*.
-
-    Raises SystemExit on mismatch.
-    """
+    """Verify a file's SHA256 checksum. Exits on mismatch."""
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     if digest != expected:
-        raise SystemExit(
-            f"sha256 mismatch for {path}: expected {expected}, got {digest}"
-        )
+        raise SystemExit(f"sha256 mismatch for {path}: expected {expected}, got {digest}")
 
 
-def action_download(url: str, dest: str, sha256: str | None) -> None:
-    """Download *url* to *dest*, optionally verifying SHA-256.
-
-    Uses a ``.part`` temporary file and atomic ``os.replace()``.
-    """
+def download(url: str, dest: str, sha256: str | None) -> None:
+    """Download a file to dest using .part atomic rename. Optionally verify SHA256."""
     final = require_workspace_path(dest)
     part = final.with_name(final.name + ".part")
     final.parent.mkdir(parents=True, exist_ok=True)
-
     with urlopen(url, timeout=120) as response, part.open("wb") as fh:
         shutil.copyfileobj(response, fh)
-
-    if sha256:
+    if sha256 and sha256 != "auto":
         verify_sha256(part, sha256)
-
     os.replace(part, final)
 
 
-def action_extract_tar(src: str, dest: str, strip_components: int = 0) -> None:
-    """Extract a tar archive from *src* to *dest* using atomic rename."""
+def extract_tar(src: str, dest: str, strip_components: int = 0) -> None:
+    """Extract a tarball into dest using a temp directory with atomic rename."""
     source = require_workspace_path(src)
     final = require_workspace_path(dest)
     final.parent.mkdir(parents=True, exist_ok=True)
     TMP_ROOT.mkdir(parents=True, exist_ok=True)
-
-    with tempfile.TemporaryDirectory(
-        prefix="extract-", dir=CDEV_RUNTIME_ROOT / "tmp"
-    ) as tmpdir:
+    tmp_dir = tempfile.mkdtemp(prefix="extract-", dir=str(TMP_ROOT))
+    try:
         with tarfile.open(source) as archive:
-            # Safety: check all member paths stay inside tmpdir
-            tmp_resolved = Path(tmpdir).resolve()
+            tmp_resolved = Path(tmp_dir).resolve()
             for member in archive.getmembers():
-                target = (Path(tmpdir) / member.name).resolve()
+                target = (Path(tmp_dir) / member.name).resolve()
                 if not str(target).startswith(str(tmp_resolved) + os.sep):
-                    raise SystemExit(
-                        f"refusing unsafe archive path: {member.name}"
-                    )
-            archive.extractall(tmpdir)
-
-        extracted = Path(tmpdir)
+                    raise SystemExit(f"refusing unsafe archive path: {member.name}")
+            archive.extractall(tmp_dir)
+        extracted = Path(tmp_dir)
         if strip_components:
             children = [p for p in extracted.iterdir()]
             if len(children) == 1 and children[0].is_dir():
                 extracted = children[0]
-
         os.replace(extracted, final)
+    finally:
+        if Path(tmp_dir).exists():
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
-def execute_plan(plan_path: Path) -> int:
-    """Execute every action in the plan at *plan_path*.
-
-    Actions are idempotent -- a completion marker is written after each
-    action succeeds, and previously-completed actions are skipped.
-    """
+def run(plan_path: Path) -> int:
     plan = json.loads(plan_path.read_text())
     STATE_ROOT.mkdir(parents=True, exist_ok=True)
+    TMP_ROOT.mkdir(parents=True, exist_ok=True)
 
     for action in plan.get("actions", []):
         action_id = action["id"]
         marker = state_marker(action_id)
-
-        # Idempotency: skip if already done
         if marker.exists():
             continue
 
-        # Check creates hint
         creates = action.get("creates")
         if creates and Path(creates).exists():
             marker.touch()
             continue
 
         kind = action["type"]
+        critical = bool(action.get("critical", True))
 
         if kind == "ensure_dir":
             path = action["values"]["path"]
             require_workspace_path(path).mkdir(parents=True, exist_ok=True)
 
         elif kind == "download":
-            action_download(
-                action["values"]["url"],
-                action["values"]["dest"],
-                action["values"].get("sha256"),
-            )
+            vals = action["values"]
+            download(vals["url"], vals["dest"], vals.get("sha256"))
 
         elif kind == "extract_tar":
-            action_extract_tar(
-                action["values"]["src"],
-                action["values"]["dest"],
-                int(action["values"].get("strip_components", 0)),
+            vals = action["values"]
+            extract_tar(
+                vals["src"],
+                vals["dest"],
+                int(vals.get("strip_components", 0)),
             )
 
         elif kind == "run":
-            subprocess.run(
-                action["command"], check=bool(action.get("critical", True))
-            )
+            result = subprocess.run(action["command"], check=False)
+            if result.returncode != 0 and critical:
+                raise SystemExit(f"critical action {action_id} failed: {result.returncode}")
 
         elif kind == "verify_command":
-            subprocess.run(
-                action["command"], check=bool(action.get("critical", True))
-            )
+            result = subprocess.run(action["command"], check=False)
+            if result.returncode != 0 and critical:
+                raise SystemExit(
+                    f"verification failed for {action_id}: {result.returncode}"
+                )
 
         elif kind == "path_prepend":
-            # path_prepend and env are declarative -- they are rendered into
-            # the env.sh file by startup.sh.  No runtime work here.
-            pass
+            path = action["values"]["path"]
+            os.environ["PATH"] = f"{path}{os.pathsep}{os.environ.get('PATH', '')}"
 
         elif kind == "env":
-            # env set is handled by startup.sh writing env.sh
-            pass
+            for key, val in action["values"].items():
+                if key != "path" and key != "type":
+                    os.environ[key] = str(val)
 
         elif kind == "symlink":
-            src = action["values"]["src"]
-            dest = require_workspace_path(action["values"]["dest"])
-            if dest.is_symlink() or dest.exists():
+            vals = action["values"]
+            src = vals["src"]
+            dest = require_workspace_path(vals["dest"])
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            if dest.exists() or dest.is_symlink():
                 dest.unlink()
             dest.symlink_to(src)
 
         elif kind == "write_file":
-            dest = require_workspace_path(action["values"]["dest"])
+            vals = action["values"]
+            dest = require_workspace_path(vals["dest"])
             dest.parent.mkdir(parents=True, exist_ok=True)
-            content = action["values"].get("content", "")
-            dest.write_text(str(content))
+            dest.write_text(vals.get("content", ""))
 
         else:
             raise SystemExit(f"unknown action type: {kind}")
@@ -193,8 +170,4 @@ def execute_plan(plan_path: Path) -> int:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("usage: run_actions.py <plan.json>", file=sys.stderr)
-        raise SystemExit(2)
-    plan_file = Path(sys.argv[1])
-    raise SystemExit(execute_plan(plan_file))
+    raise SystemExit(run(Path(sys.argv[1])))

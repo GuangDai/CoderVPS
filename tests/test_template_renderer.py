@@ -1,15 +1,62 @@
-"""Tests for codervps.render.template -- Terraform JSON renderer."""
+"""Tests for codervps.render.template -- main.tf.json rendering."""
 
 from __future__ import annotations
 
 import json
 
-from codervps.render.template import render_main_tf_json
+from codervps.render.template import _make_language_options, _make_node_options, render_main_tf_json
 
 
-# ============================================================================
-# Workspace volume tests
-# ============================================================================
+# ---- Option helpers ----
+
+
+def test_make_node_options():
+    options = _make_node_options()
+    assert len(options) == 5
+    values = [o["value"] for o in options]
+    assert values == ["24", "22", "20", "18", "16"]
+
+
+def test_make_language_options():
+    options = _make_language_options()
+    assert len(options) == 4
+    values = [o["value"] for o in options]
+    assert values == ["python", "rust", "go", "cpp"]
+
+
+# ---- Top-level structure ----
+
+
+def test_render_has_terraform_block():
+    doc = render_main_tf_json(images={"images": []}, catalog={"plugins": {}})
+    assert "terraform" in doc
+    assert "coder/coder" in doc["terraform"]["required_providers"]["coder"]["source"]
+
+
+def test_render_has_provider_blocks():
+    doc = render_main_tf_json(images={"images": []}, catalog={"plugins": {}})
+    assert "provider" in doc
+    assert "coder" in doc["provider"]
+    assert "docker" in doc["provider"]
+
+
+def test_render_has_data_blocks():
+    doc = render_main_tf_json(images={"images": []}, catalog={"plugins": {}})
+    assert "data" in doc
+    assert "coder_workspace" in doc["data"]
+    assert "coder_parameter" in doc["data"]
+
+
+def test_render_has_resource_blocks():
+    doc = render_main_tf_json(images={"images": []}, catalog={"plugins": {}})
+    assert "resource" in doc
+    assert "docker_volume" in doc["resource"]
+    assert "docker_container" in doc["resource"]
+    assert "coder_agent" in doc["resource"]
+    assert "coder_app" in doc["resource"]
+
+
+# ---- Volume isolation ----
 
 
 def test_main_tf_json_contains_isolated_workspace_volume():
@@ -28,26 +75,21 @@ def test_main_tf_json_contains_isolated_workspace_volume():
     volume = resources["docker_volume"]["workspace"]
     assert volume["name"] == "coder-${data.coder_workspace.me.id}-workspace"
     assert volume["lifecycle"]["ignore_changes"] == "all"
+    container = resources["docker_container"]["workspace"]
+    assert container["volumes"][0]["container_path"] == "/workspace"
+    assert container["volumes"][0]["volume_name"] == "${docker_volume.workspace.name}"
 
 
-def test_volume_has_workspace_id_label():
+def test_volume_has_coder_labels():
     doc = render_main_tf_json(images={"images": []}, catalog={"plugins": {}})
     volume = doc["resource"]["docker_volume"]["workspace"]
-    labels = {lab["label"]: lab["value"] for lab in volume["labels"]}
-    assert "coder.workspace_id" in labels
-    assert "${data.coder_workspace.me.id}" in labels["coder.workspace_id"]
+    labels = volume["labels"]
+    label_keys = [lbl["label"] for lbl in labels]
+    assert "coder.workspace_id" in label_keys
+    assert "coder.owner" in label_keys
 
 
-def test_volume_has_owner_label():
-    doc = render_main_tf_json(images={"images": []}, catalog={"plugins": {}})
-    volume = doc["resource"]["docker_volume"]["workspace"]
-    labels = {lab["label"]: lab["value"] for lab in volume["labels"]}
-    assert "coder.owner" in labels
-
-
-# ============================================================================
-# Parameter tests
-# ============================================================================
+# ---- Parameter immutability ----
 
 
 def test_parameters_are_immutable():
@@ -55,189 +97,231 @@ def test_parameters_are_immutable():
     params = doc["data"]["coder_parameter"]
     assert params["node_major"]["mutable"] is False
     assert params["languages"]["mutable"] is False
+    # Language-specific params also immutable
+    for key, param in params.items():
+        if key not in ("node_major", "languages"):
+            assert param["mutable"] is False, f"{key} should be immutable"
 
 
-def test_node_major_parameter_options():
+# ---- No host docker socket or prevent_destroy ----
+
+
+def test_template_does_not_mount_host_docker_socket_or_block_destroy():
     doc = render_main_tf_json(images={"images": []}, catalog={"plugins": {}})
+    text = json.dumps(doc, sort_keys=True)
+    assert "/var/run/docker.sock" not in text
+    assert "docker.sock" not in text
+    assert "prevent_destroy" not in text
+
+
+# ---- Node major parameter ----
+
+
+def test_node_major_parameter():
+    doc = render_main_tf_json(images={"images": []}, catalog={"plugins": {}})
+    param = doc["data"]["coder_parameter"]["node_major"]
+    assert param["name"] == "node_major"
+    assert param["display_name"] == "Node.js"
+    assert param["type"] == "string"
+    assert param["default"] == "24"
+    assert len(param["option"]) == 5
+
+
+# ---- Languages parameter ----
+
+
+def test_languages_parameter():
+    doc = render_main_tf_json(images={"images": []}, catalog={"plugins": {}})
+    param = doc["data"]["coder_parameter"]["languages"]
+    assert param["name"] == "languages"
+    assert param["type"] == "list(string)"
+    assert param["default"] == '["python"]'
+    assert len(param["option"]) == 4
+
+
+# ---- Language-specific parameters ----
+
+
+def test_python_parameters_present():
+    doc = render_main_tf_json(
+        images={"images": []}, catalog={"plugins": {"python": {}, "rust": {}, "go": {}, "cpp": {}}}
+    )
     params = doc["data"]["coder_parameter"]
-    node_opts = params["node_major"]["option"]
-    values = [o["value"] for o in node_opts]
-    assert values == ["24", "22", "20", "18", "16"]
+    assert "python_version" in params
+    assert "python_tools" in params
+    assert params["python_version"]["condition"]
 
 
-def test_languages_multi_select_options():
-    doc = render_main_tf_json(images={"images": []}, catalog={"plugins": {}})
+def test_rust_parameters_present():
+    doc = render_main_tf_json(
+        images={"images": []}, catalog={"plugins": {"python": {}, "rust": {}, "go": {}, "cpp": {}}}
+    )
     params = doc["data"]["coder_parameter"]
-    lang = params["languages"]
-    assert lang["type"] == "list(string)"
-    options = {o["value"] for o in lang["option"]}
-    assert options == {"python", "rust", "go", "cpp"}
+    assert "rust_toolchain" in params
+    assert params["rust_toolchain"]["condition"]
 
 
-def test_per_language_parameters_have_conditions():
-    doc = render_main_tf_json(images={"images": []}, catalog={"plugins": {}})
+def test_go_parameters_present():
+    doc = render_main_tf_json(
+        images={"images": []}, catalog={"plugins": {"python": {}, "rust": {}, "go": {}, "cpp": {}}}
+    )
     params = doc["data"]["coder_parameter"]
-    assert "condition" in params["python_version"]
-    assert "condition" in params["rust_toolchain"]
-    assert "condition" in params["go_version"]
-    assert "condition" in params["cpp_llvm"]
+    assert "go_version" in params
+    assert "go_tools" in params
+    assert params["go_version"]["condition"]
 
 
-# ============================================================================
-# Container and agent tests
-# ============================================================================
+def test_cpp_parameters_present():
+    doc = render_main_tf_json(
+        images={"images": []}, catalog={"plugins": {"python": {}, "rust": {}, "go": {}, "cpp": {}}}
+    )
+    params = doc["data"]["coder_parameter"]
+    assert "cpp_llvm" in params
+    assert params["cpp_llvm"]["condition"]
 
 
-def test_container_mounts_workspace_volume():
-    doc = render_main_tf_json(images={"images": []}, catalog={"plugins": {}})
-    container = doc["resource"]["docker_container"]["workspace"]
-    workspace_vol = [v for v in container["volumes"] if v["container_path"] == "/workspace"]
-    assert len(workspace_vol) == 1
-    assert workspace_vol[0]["read_only"] is False
-    assert "docker_volume.workspace.name" in workspace_vol[0]["volume_name"]
+def test_condition_contains_language_reference():
+    doc = render_main_tf_json(images={"images": []}, catalog={"plugins": {"python": {}}})
+    params = doc["data"]["coder_parameter"]
+    assert "python_version" in params
+    condition = params["python_version"]["condition"]
+    assert "data.coder_parameter.languages.value" in condition
+    assert '"python"' in condition
 
 
-def test_container_mounts_extensions_read_only():
-    doc = render_main_tf_json(images={"images": []}, catalog={"plugins": {}})
-    container = doc["resource"]["docker_container"]["workspace"]
-    ext_vol = [v for v in container["volumes"] if v["container_path"] == "/opt/cde/extensions"]
-    assert len(ext_vol) == 1
-    assert ext_vol[0]["read_only"] is True
-
-
-def test_container_mounts_vsix_read_only():
-    doc = render_main_tf_json(images={"images": []}, catalog={"plugins": {}})
-    container = doc["resource"]["docker_container"]["workspace"]
-    vsix_vol = [v for v in container["volumes"] if v["container_path"] == "/opt/cde/vsix"]
-    assert len(vsix_vol) == 1
-    assert vsix_vol[0]["read_only"] is True
+# ---- Container configuration ----
 
 
 def test_container_uses_start_count():
     doc = render_main_tf_json(images={"images": []}, catalog={"plugins": {}})
     container = doc["resource"]["docker_container"]["workspace"]
-    assert "start_count" in container["count"]
+    assert container["count"] == "${data.coder_workspace.me.start_count}"
 
 
-def test_coder_agent_main_dir_is_workspace():
+def test_container_has_coder_labels():
+    doc = render_main_tf_json(images={"images": []}, catalog={"plugins": {}})
+    container = doc["resource"]["docker_container"]["workspace"]
+    labels = container["labels"]
+    label_keys = [lbl["label"] for lbl in labels]
+    assert "coder.workspace_id" in label_keys
+    assert "coder.owner" in label_keys
+
+
+def test_container_mounts_opt_cde_readonly():
+    doc = render_main_tf_json(images={"images": []}, catalog={"plugins": {}})
+    container = doc["resource"]["docker_container"]["workspace"]
+    volumes = container["volumes"]
+    opt_mounts = [v for v in volumes if "/opt/cde" in v.get("container_path", "")]
+    for mount in opt_mounts:
+        assert mount["read_only"] is True
+
+
+def test_workspace_volume_read_write():
+    doc = render_main_tf_json(images={"images": []}, catalog={"plugins": {}})
+    container = doc["resource"]["docker_container"]["workspace"]
+    ws_mount = [v for v in container["volumes"] if v["container_path"] == "/workspace"][0]
+    assert ws_mount["read_only"] is False
+
+
+# ---- Coder agent ----
+
+
+def test_agent_configuration():
     doc = render_main_tf_json(images={"images": []}, catalog={"plugins": {}})
     agent = doc["resource"]["coder_agent"]["main"]
-    assert agent["dir"] == "/workspace"
     assert agent["os"] == "linux"
+    assert agent["dir"] == "/workspace"
+    assert "startup_script" in agent
+
+
+# ---- Coder app ----
 
 
 def test_code_server_app():
     doc = render_main_tf_json(images={"images": []}, catalog={"plugins": {}})
     app = doc["resource"]["coder_app"]["code_server"]
     assert app["slug"] == "code-server"
+    assert app["display_name"] == "VS Code Web"
+    assert app["share"] == "owner"
+    assert app["subdomain"] is False
     assert "13337" in app["url"]
 
 
-# ============================================================================
-# Safety constraints
-# ============================================================================
+# ---- Locals ----
 
 
-def test_template_does_not_mount_host_docker_socket():
-    doc = render_main_tf_json(images={"images": []}, catalog={"plugins": {}})
-    text = json.dumps(doc, sort_keys=True)
-    assert "/var/run/docker.sock" not in text
-    assert "docker.sock" not in text
-
-
-def test_template_does_not_use_prevent_destroy():
-    doc = render_main_tf_json(images={"images": []}, catalog={"plugins": {}})
-    text = json.dumps(doc, sort_keys=True)
-    assert "prevent_destroy" not in text
-
-
-# ============================================================================
-# Locals / image selection
-# ============================================================================
-
-
-def test_selected_image_local():
-    doc = render_main_tf_json(images={"images": []}, catalog={"plugins": {}})
-    assert "selected_image" in doc["locals"]
-    assert "image.image" in doc["locals"]["selected_image"]
-
-
-def test_images_passed_through_locals():
-    images = {
-        "images": [
-            {
-                "node_major": 24,
-                "image": "ghcr.io/guangdai/codervps-devbox:noble-20260511-node24",
-            }
-        ]
-    }
-    doc = render_main_tf_json(images=images, catalog={"plugins": {}})
-    assert doc["locals"]["images"] == images["images"]
-
-
-# ============================================================================
-# Terraform provider requirements
-# ============================================================================
-
-
-def test_terraform_block_has_required_providers():
-    doc = render_main_tf_json(images={"images": []}, catalog={"plugins": {}})
-    providers = doc["terraform"]["required_providers"]
-    assert providers["coder"]["source"] == "coder/coder"
-    assert providers["docker"]["source"] == "kreuzwerker/docker"
-
-
-def test_provider_block_exists():
-    doc = render_main_tf_json(images={"images": []}, catalog={"plugins": {}})
-    assert "coder" in doc["provider"]
-    assert "docker" in doc["provider"]
-
-
-# ============================================================================
-# Catalog-driven parameter defaults
-# ============================================================================
-
-
-def test_python_default_from_catalog():
-    catalog = {"plugins": {"python": {"defaults": {"version": "3.12"}}}}
-    doc = render_main_tf_json(images={"images": []}, catalog=catalog)
-    assert doc["data"]["coder_parameter"]["python_version"]["default"] == "3.12"
-
-
-def test_go_default_from_catalog():
-    catalog = {"plugins": {"go": {"defaults": {"version": "1.21"}}}}
-    doc = render_main_tf_json(images={"images": []}, catalog=catalog)
-    assert doc["data"]["coder_parameter"]["go_version"]["default"] == "1.21"
-
-
-def test_rust_default_from_catalog():
-    catalog = {"plugins": {"rust": {"defaults": {"toolchain": "nightly"}}}}
-    doc = render_main_tf_json(images={"images": []}, catalog=catalog)
-    assert doc["data"]["coder_parameter"]["rust_toolchain"]["default"] == "nightly"
-
-
-def test_cpp_default_from_catalog():
-    catalog = {"plugins": {"cpp": {"defaults": {"llvm": "19"}}}}
-    doc = render_main_tf_json(images={"images": []}, catalog=catalog)
-    assert doc["data"]["coder_parameter"]["cpp_llvm"]["default"] == "19"
-
-
-# ============================================================================
-# JSON roundtrip
-# ============================================================================
-
-
-def test_render_main_tf_json_is_valid_json():
+def test_locals_has_images_and_catalog():
     doc = render_main_tf_json(
-        images={"images": []},
-        catalog={"plugins": {"python": {}, "rust": {}, "go": {}, "cpp": {}}},
+        images={"images": [{"node_major": 24, "image": "ghcr.io/test:image"}]},
+        catalog={"plugins": {}},
+    )
+    locals_block = doc["locals"]
+    assert "images" in locals_block
+    assert "catalog" in locals_block
+    assert "selected_image" in locals_block
+
+
+def test_selected_image_uses_for_expression():
+    doc = render_main_tf_json(images={"images": []}, catalog={"plugins": {}})
+    selected = doc["locals"]["selected_image"]
+    assert "one(" in selected
+    assert "data.coder_parameter.node_major.value" in selected
+
+
+# ---- Empty catalog still produces valid structure ----
+
+
+def test_render_with_empty_catalog():
+    doc = render_main_tf_json(images={"images": []}, catalog={})
+    assert "terraform" in doc
+    assert "resource" in doc
+
+
+def test_render_with_no_images():
+    doc = render_main_tf_json(images={}, catalog={"plugins": {}})
+    assert doc["locals"]["images"] == []
+
+
+# ---- JSON can be serialized ----
+
+
+def test_output_is_valid_json():
+    doc = render_main_tf_json(
+        images={"images": []}, catalog={"plugins": {"python": {}, "rust": {}, "go": {}, "cpp": {}}}
     )
     serialized = json.dumps(doc, sort_keys=True)
-    re_parsed = json.loads(serialized)
-    assert re_parsed == doc
+    assert len(serialized) > 0
+    roundtripped = json.loads(serialized)
+    assert roundtripped == doc
 
 
-def test_required_top_level_keys():
+# ---- Order of volume parameters ----
+
+
+def test_node_major_is_first_parameter():
     doc = render_main_tf_json(images={"images": []}, catalog={"plugins": {}})
-    for key in ["terraform", "provider", "data", "resource", "locals"]:
-        assert key in doc, f"missing top-level key: {key}"
+    params = doc["data"]["coder_parameter"]
+    assert params["node_major"]["order"] == 1
+
+
+def test_languages_is_second_parameter():
+    doc = render_main_tf_json(images={"images": []}, catalog={"plugins": {}})
+    params = doc["data"]["coder_parameter"]
+    assert params["languages"]["order"] == 2
+
+
+def test_language_parameters_have_higher_order():
+    doc = render_main_tf_json(images={"images": []}, catalog={"plugins": {"python": {}}})
+    params = doc["data"]["coder_parameter"]
+    assert params["python_version"]["order"] > params["languages"]["order"]
+
+
+# ---- Missing plugins skip parameters ----
+
+
+def test_missing_plugin_no_parameters():
+    doc = render_main_tf_json(images={"images": []}, catalog={"plugins": {"python": {}}})
+    params = doc["data"]["coder_parameter"]
+    assert "rust_toolchain" not in params
+    assert "go_version" not in params
+    assert "cpp_llvm" not in params

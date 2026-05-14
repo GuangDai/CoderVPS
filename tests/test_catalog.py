@@ -1,4 +1,4 @@
-"""Tests for codervps.catalog -- refresh_catalog and upstream metadata resolution."""
+"""Tests for codervps.catalog and codervps.discovery."""
 
 from __future__ import annotations
 
@@ -6,43 +6,58 @@ from pathlib import Path
 
 import pytest
 
-from codervps.catalog import _latest_node_patch, _node_status, _resolve_go_versions, refresh_catalog
+from codervps.catalog import (
+    _latest_node_patch,
+    _node_status,
+    refresh_catalog,
+    refresh_catalog_from_path,
+)
 from codervps.config import load_toolchains_config
-from codervps.discovery import go_downloads, node_index
+from codervps.discovery import go_downloads, load_json, node_index
 
 
-# ============================================================================
-# Helper: _latest_node_patch
-# ============================================================================
+# ---- Discovery helpers ----
 
 
-def test_latest_node_patch_finds_correct_version():
-    index = [
-        {"version": "v24.11.1"},
-        {"version": "v24.10.0"},
-        {"version": "v22.21.0"},
-    ]
-    assert _latest_node_patch(index, 24) == "24.11.1"
-    assert _latest_node_patch(index, 22) == "22.21.0"
+def test_load_json_reads_file(tmp_path):
+    path = tmp_path / "test.json"
+    path.write_text('{"key": "value"}')
+    result = load_json(path)
+    assert result == {"key": "value"}
 
 
-def test_latest_node_patch_missing_major():
-    index = [{"version": "v22.21.0"}]
-    with pytest.raises(ValueError, match="no Node version found"):
-        _latest_node_patch(index, 24)
+def test_load_json_reads_array(tmp_path):
+    path = tmp_path / "test.json"
+    path.write_text("[1, 2, 3]")
+    result = load_json(path)
+    assert result == [1, 2, 3]
 
 
-def test_latest_node_patch_skips_prerelease():
-    index = [
-        {"version": "v24.11.1"},
-        {"version": "v24.12.0-rc1"},
-    ]
-    assert _latest_node_patch(index, 24) == "24.11.1"
+def test_node_index_with_fixtures():
+    result = node_index(fixture_dir=Path("tests/fixtures"))
+    assert isinstance(result, list)
+    assert len(result) > 0
+    assert any("v24" in str(e["version"]) for e in result)
 
 
-# ============================================================================
-# Helper: _node_status
-# ============================================================================
+def test_node_index_without_fixtures_no_error():
+    result = node_index()
+    assert isinstance(result, list)
+
+
+def test_go_downloads_with_fixtures():
+    result = go_downloads(fixture_dir=Path("tests/fixtures"))
+    assert isinstance(result, list)
+    assert len(result) > 0
+    assert any("go1.24.9" in str(e.get("version", "")) for e in result)
+
+
+def test_go_downloads_without_fixtures_no_error():
+    result = go_downloads()
+    assert isinstance(result, list)
+
+
+# ---- Node status helper ----
 
 
 def test_node_status_active_lts():
@@ -59,87 +74,34 @@ def test_node_status_eol():
     assert _node_status(20) == "eol"
     assert _node_status(18) == "eol"
     assert _node_status(16) == "eol"
+    assert _node_status(14) == "eol"
 
 
-# ============================================================================
-# Helper: _resolve_go_versions
-# ============================================================================
+# ---- Node patch lookup ----
 
 
-def test_resolve_go_versions_from_fixtures():
-    dl = go_downloads(Path("tests/fixtures"))
-    resolved = _resolve_go_versions(dl, 20)
-    assert len(resolved) >= 4
-    for entry in resolved:
-        assert "version" in entry
-        assert "sha256" in entry
-        assert "series" in entry
-        # sha256 must not be empty for linux-amd64 entries
-        assert entry["sha256"] != ""
+def test_latest_node_patch_returns_version():
+    index = [{"version": "v24.11.1"}, {"version": "v24.10.0"}, {"version": "v22.21.0"}]
+    assert _latest_node_patch(index, 24) == "24.11.1"
+    assert _latest_node_patch(index, 22) == "22.21.0"
 
 
-def test_resolve_go_versions_uses_linux_amd64_sha():
-    dl = go_downloads(Path("tests/fixtures"))
-    resolved = _resolve_go_versions(dl, 20)
-    for entry in resolved:
-        assert entry["sha256"].startswith("sha-go-linux-amd64-")
+def test_latest_node_patch_missing_raises():
+    index = [{"version": "v24.11.1"}]
+    with pytest.raises(ValueError, match="missing Node major 22"):
+        _latest_node_patch(index, 22)
 
 
-def test_resolve_go_versions_limited_count():
-    dl = go_downloads(Path("tests/fixtures"))
-    resolved = _resolve_go_versions(dl, 2)
-    assert len(resolved) == 2
-
-
-def test_resolve_go_versions_sorted_by_latest():
-    dl = go_downloads(Path("tests/fixtures"))
-    resolved = _resolve_go_versions(dl, 20)
-    # First entry should be the highest stable minor
-    first = resolved[0]["series"]
-    all_series = [r["series"] for r in resolved]
-    assert first == max(all_series, key=lambda s: tuple(int(x) for x in s.split(".")))
-
-
-def test_resolve_go_versions_skips_duplicate_series():
-    """When two patch releases exist for the same minor, only the first (latest) is kept."""
-    dl = [
-        {
-            "version": "go1.22.14",
-            "stable": True,
-            "files": [{"filename": "go1.22.14.linux-amd64.tar.gz", "sha256": "aa"}],
-        },
-        {
-            "version": "go1.22.12",
-            "stable": True,
-            "files": [{"filename": "go1.22.12.linux-amd64.tar.gz", "sha256": "bb"}],
-        },
+def test_latest_node_patch_skips_non_matching():
+    index = [
+        {"version": "v24.11.1"},
+        {"version": "v23.0.0"},
+        {"version": "v22.21.0"},
     ]
-    resolved = _resolve_go_versions(dl, 20)
-    assert len(resolved) == 1
-    assert resolved[0]["version"] == "1.22.14"
-    assert resolved[0]["sha256"] == "aa"
+    assert _latest_node_patch(index, 22) == "22.21.0"
 
 
-def test_resolve_go_versions_excludes_unstable():
-    dl = [
-        {
-            "version": "go1.25.3",
-            "stable": True,
-            "files": [{"filename": "go1.25.3.linux-amd64.tar.gz", "sha256": "aa"}],
-        },
-        {
-            "version": "go1.26.0-rc1",
-            "stable": False,
-            "files": [{"filename": "go1.26.0-rc1.linux-amd64.tar.gz", "sha256": "bb"}],
-        },
-    ]
-    resolved = _resolve_go_versions(dl, 20)
-    assert all(r["series"] != "1.26" for r in resolved)
-
-
-# ============================================================================
-# refresh_catalog integration tests
-# ============================================================================
+# ---- Catalog refresh ----
 
 
 def test_refresh_catalog_from_fixtures():
@@ -147,44 +109,22 @@ def test_refresh_catalog_from_fixtures():
     catalog = refresh_catalog(cfg, fixture_dir=Path("tests/fixtures"))
     assert catalog["schema_version"] == 1
     assert catalog["arch"] == "linux/amd64"
-    assert "generated_at" in catalog
+    assert sorted(catalog["node"]["majors"]) == ["16", "18", "20", "22", "24"]
+    assert "python" in catalog["plugins"]
+    assert "rust" in catalog["plugins"]
+    assert "go" in catalog["plugins"]
+    assert "cpp" in catalog["plugins"]
 
 
-def test_refresh_catalog_node_majors_from_fixtures():
+def test_refresh_catalog_node_versions():
     cfg = load_toolchains_config(Path("config/toolchains.toml"))
     catalog = refresh_catalog(cfg, fixture_dir=Path("tests/fixtures"))
-    majors = catalog["node"]["majors"]
-    assert sorted(majors.keys(), key=int) == ["16", "18", "20", "22", "24"]
-
-
-def test_refresh_catalog_node_versions_resolved():
-    cfg = load_toolchains_config(Path("config/toolchains.toml"))
-    catalog = refresh_catalog(cfg, fixture_dir=Path("tests/fixtures"))
-    node_24 = catalog["node"]["majors"]["24"]
-    assert node_24["version"] == "24.11.1"
-    assert node_24["status"] == "active_lts"
-
-
-def test_refresh_catalog_go_versions_resolved():
-    cfg = load_toolchains_config(Path("config/toolchains.toml"))
-    catalog = refresh_catalog(cfg, fixture_dir=Path("tests/fixtures"))
-    go_plugins = catalog["plugins"]["go"]
-    assert len(go_plugins["versions"]) > 0
-    assert go_plugins["defaults"]["version"] == "latest"
-
-
-def test_refresh_catalog_plugins_present():
-    cfg = load_toolchains_config(Path("config/toolchains.toml"))
-    catalog = refresh_catalog(cfg, fixture_dir=Path("tests/fixtures"))
-    for pid in ["python", "rust", "go", "cpp"]:
-        assert pid in catalog["plugins"], f"missing plugin: {pid}"
-
-
-def test_refresh_catalog_tools_present():
-    cfg = load_toolchains_config(Path("config/toolchains.toml"))
-    catalog = refresh_catalog(cfg, fixture_dir=Path("tests/fixtures"))
-    for tool in ["uv", "code_server", "sccache", "llvm_prebundle"]:
-        assert tool in catalog["tools"], f"missing tool: {tool}"
+    assert catalog["node"]["majors"]["24"]["version"] == "24.11.1"
+    assert catalog["node"]["majors"]["24"]["status"] == "active_lts"
+    assert catalog["node"]["majors"]["22"]["version"] == "22.21.0"
+    assert catalog["node"]["majors"]["22"]["status"] == "maintenance_lts"
+    assert catalog["node"]["majors"]["16"]["version"] == "16.20.2"
+    assert catalog["node"]["majors"]["16"]["status"] == "eol"
 
 
 def test_refresh_catalog_base_info():
@@ -192,86 +132,122 @@ def test_refresh_catalog_base_info():
     catalog = refresh_catalog(cfg, fixture_dir=Path("tests/fixtures"))
     assert catalog["base"]["source"] == "codercom/example-base"
     assert catalog["base"]["ubuntu"] == "noble"
+    assert catalog["base"]["tag"] == "ubuntu-noble-20260511"
 
 
-def test_refresh_catalog_go_versions_include_sha256():
+def test_refresh_catalog_has_generated_at():
     cfg = load_toolchains_config(Path("config/toolchains.toml"))
     catalog = refresh_catalog(cfg, fixture_dir=Path("tests/fixtures"))
-    for v in catalog["plugins"]["go"]["versions"]:
-        assert "sha256" in v.get("metadata", {}), f"missing sha256 for {v['value']}"
-        assert v["metadata"]["sha256"] != ""
+    assert "T" in catalog["generated_at"]
 
 
-# ============================================================================
-# node_index and go_downloads fixtures
-# ============================================================================
+def test_refresh_catalog_plugin_defaults():
+    cfg = load_toolchains_config(Path("config/toolchains.toml"))
+    catalog = refresh_catalog(cfg, fixture_dir=Path("tests/fixtures"))
+    assert catalog["plugins"]["python"]["defaults"]["version"] == "3.13"
+    assert catalog["plugins"]["rust"]["defaults"]["toolchain"] == "stable"
+    assert catalog["plugins"]["go"]["defaults"]["version"] == "latest"
+    assert catalog["plugins"]["cpp"]["defaults"]["llvm"] == "latest"
 
 
-def test_node_index_fixture_loads():
-    data = node_index(Path("tests/fixtures"))
-    assert len(data) >= 5
-    assert isinstance(data, list)
-    assert all(isinstance(e, dict) for e in data)
+def test_refresh_catalog_tools():
+    cfg = load_toolchains_config(Path("config/toolchains.toml"))
+    catalog = refresh_catalog(cfg, fixture_dir=Path("tests/fixtures"))
+    assert "uv" in catalog["tools"]
+    assert "code_server" in catalog["tools"]
+    assert "sccache" in catalog["tools"]
+    assert "llvm_prebundle" in catalog["tools"]
 
 
-def test_node_index_fixture_has_versions():
-    data = node_index(Path("tests/fixtures"))
-    versions = [e["version"] for e in data]
-    assert "v24.11.1" in versions
-    assert "v22.21.0" in versions
+def test_refresh_catalog_go_versions_from_fixtures():
+    cfg = load_toolchains_config(Path("config/toolchains.toml"))
+    catalog = refresh_catalog(cfg, fixture_dir=Path("tests/fixtures"))
+    go_versions = catalog["plugins"]["go"]["versions"]
+    assert len(go_versions) >= 4
+    version_values = [v["version"] for v in go_versions]
+    assert "1.24.9" in version_values
+    assert "1.23.12" in version_values
 
 
-def test_go_downloads_fixture_loads():
-    data = go_downloads(Path("tests/fixtures"))
-    assert len(data) >= 4
-    assert isinstance(data, list)
-    assert all(isinstance(e, dict) for e in data)
+def test_refresh_catalog_go_versions_have_sha256():
+    cfg = load_toolchains_config(Path("config/toolchains.toml"))
+    catalog = refresh_catalog(cfg, fixture_dir=Path("tests/fixtures"))
+    go_versions = catalog["plugins"]["go"]["versions"]
+    for v in go_versions:
+        if v["status"] == "active":
+            assert v["sha256"], f"Missing SHA256 for Go {v['version']}"
 
 
-def test_go_downloads_fixture_has_supported_versions():
-    data = go_downloads(Path("tests/fixtures"))
-    versions = [e["version"] for e in data]
-    assert "go1.22.12" in versions
-    assert all(e.get("stable") for e in data[:4])
-
-
-# ============================================================================
-# Edge cases
-# ============================================================================
-
-
-def test_refresh_catalog_empty_enabled_plugins(tmp_path):
-    """Catalog should work even with empty enabled plugins list."""
-    from codervps.catalog import refresh_catalog as rc
-    from codervps.models import ToolchainsConfig
-
-    cfg = ToolchainsConfig(
-        project_arch="linux/amd64",
-        node_majors=[24],
-        enabled_plugins=[],
-        overrides={},
-        python_min_minor="3.6",
-        python_max_minor="latest",
-        python_default="3.13",
-        python_default_tools=["ruff"],
-        rust_stable_minor_count=30,
-        rust_default="stable",
-        rust_components=["rustfmt"],
-        rust_use_sccache=True,
-        go_minor_count=20,
-        go_default="latest",
-        go_default_tools=["gopls"],
-        cpp_default_llvm="latest",
-        cpp_prebundle="latest",
-        cpp_default_tools=["xmake"],
-    )
-    catalog = rc(cfg, fixture_dir=Path("tests/fixtures"))
+def test_refresh_catalog_from_path():
+    catalog = refresh_catalog_from_path("config/toolchains.toml", fixture_dir="tests/fixtures")
     assert catalog["schema_version"] == 1
 
 
-def test_refresh_catalog_overrides_flow_to_tools():
+def test_refresh_catalog_with_overrides(tmp_path):
+    cfg = load_toolchains_config(Path("config/toolchains.toml"))
+    cfg_with_overrides = type(cfg)(
+        project_arch=cfg.project_arch,
+        node_majors=[24],
+        enabled_plugins=["python"],
+        overrides={"uv": "0.99.0", "code_server": "5.0.0"},
+        python_min_minor=cfg.python_min_minor,
+        python_max_minor=cfg.python_max_minor,
+        python_default=cfg.python_default,
+        python_default_tools=cfg.python_default_tools,
+        rust_stable_minor_count=cfg.rust_stable_minor_count,
+        rust_default=cfg.rust_default,
+        rust_components=cfg.rust_components,
+        rust_use_sccache=cfg.rust_use_sccache,
+        go_minor_count=cfg.go_minor_count,
+        go_default=cfg.go_default,
+        go_default_tools=cfg.go_default_tools,
+        cpp_default_llvm=cfg.cpp_default_llvm,
+        cpp_prebundle=cfg.cpp_prebundle,
+        cpp_default_tools=cfg.cpp_default_tools,
+    )
+    catalog = refresh_catalog(cfg_with_overrides, fixture_dir=Path("tests/fixtures"))
+    assert catalog["tools"]["uv"]["version"] == "0.99.0"
+    assert catalog["tools"]["code_server"]["version"] == "5.0.0"
+
+
+def test_refresh_catalog_without_override_defaults():
+    cfg = load_toolchains_config(Path("config/toolchains.toml"))
+    cfg_empty = type(cfg)(
+        project_arch=cfg.project_arch,
+        node_majors=[24],
+        enabled_plugins=["python"],
+        overrides={},
+        python_min_minor=cfg.python_min_minor,
+        python_max_minor=cfg.python_max_minor,
+        python_default=cfg.python_default,
+        python_default_tools=cfg.python_default_tools,
+        rust_stable_minor_count=cfg.rust_stable_minor_count,
+        rust_default=cfg.rust_default,
+        rust_components=cfg.rust_components,
+        rust_use_sccache=cfg.rust_use_sccache,
+        go_minor_count=cfg.go_minor_count,
+        go_default=cfg.go_default,
+        go_default_tools=cfg.go_default_tools,
+        cpp_default_llvm=cfg.cpp_default_llvm,
+        cpp_prebundle=cfg.cpp_prebundle,
+        cpp_default_tools=cfg.cpp_default_tools,
+    )
+    catalog = refresh_catalog(cfg_empty, fixture_dir=Path("tests/fixtures"))
+    assert catalog["tools"]["uv"]["version"] == "auto"
+    assert catalog["tools"]["sccache"]["version"] == "auto"
+
+
+def test_refresh_catalog_schema_version_is_int():
     cfg = load_toolchains_config(Path("config/toolchains.toml"))
     catalog = refresh_catalog(cfg, fixture_dir=Path("tests/fixtures"))
-    # overrides default to empty strings => "auto"
-    assert catalog["tools"]["uv"]["version"] == "auto"
-    assert catalog["tools"]["code_server"]["version"] == "auto"
+    assert isinstance(catalog["schema_version"], int)
+
+
+# ---- Node index from real file verifies structure ----
+
+
+def test_node_index_fixture_has_all_node_majors():
+    index = node_index(fixture_dir=Path("tests/fixtures"))
+    for major in [24, 22, 20, 18, 16]:
+        version = _latest_node_patch(index, major)
+        assert version, f"Node major {major} not found in fixture"

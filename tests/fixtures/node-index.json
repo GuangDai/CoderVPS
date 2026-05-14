@@ -1,11 +1,12 @@
 [
-  {"version": "v24.11.1", "lts": "Krypton", "date": "2026-04-22"},
-  {"version": "v24.11.0", "lts": "Krypton", "date": "2026-03-17"},
-  {"version": "v23.10.0", "lts": false, "date": "2026-03-11"},
-  {"version": "v22.21.0", "lts": "Jod", "date": "2026-04-22"},
-  {"version": "v22.20.0", "lts": "Jod", "date": "2026-03-18"},
-  {"version": "v20.19.5", "lts": "Iron", "date": "2026-04-09"},
-  {"version": "v20.19.4", "lts": "Iron", "date": "2026-03-12"},
-  {"version": "v18.20.8", "lts": "Hydrogen", "date": "2026-03-19"},
-  {"version": "v16.20.2", "lts": "Gallium", "date": "2024-05-08"}
+  {"version": "v24.11.1", "lts": "Krypton"},
+  {"version": "v24.10.0", "lts": false},
+  {"version": "v22.21.0", "lts": "Jod"},
+  {"version": "v22.20.0", "lts": false},
+  {"version": "v20.19.5", "lts": "Iron"},
+  {"version": "v20.18.0", "lts": false},
+  {"version": "v18.20.8", "lts": "Hydrogen"},
+  {"version": "v18.19.0", "lts": false},
+  {"version": "v16.20.2", "lts": "Gallium"},
+  {"version": "v16.19.0", "lts": false}
 ]

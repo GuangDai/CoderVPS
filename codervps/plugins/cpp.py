@@ -1,75 +1,77 @@
 from __future__ import annotations
 
-from codervps.models import ParameterSpec, PluginCatalog, RuntimeAction, RuntimePlan
-
-_CDEV = "/workspace/.cdev"
+from codervps.models import ParameterSpec, PluginCatalog, RuntimeAction, RuntimePlan, VersionEntry
 
 
 class CppPlugin:
-    id: str = "cpp"
-    label: str = "C/C++"
+    id = "cpp"
+    label = "C/C++"
 
-    def discover(self) -> PluginCatalog:
-        """Discover available LLVM/clangd versions."""
-        raise NotImplementedError("catalog discovery is implemented in catalog.py")
+    def discover(self, fixture_dir=None) -> PluginCatalog:
+        versions = [
+            VersionEntry(value="20", label="LLVM 20", status="prerelease"),
+            VersionEntry(value="19", label="LLVM 19", default=True, status="active"),
+            VersionEntry(value="18", label="LLVM 18", status="active"),
+            VersionEntry(value="17", label="LLVM 17", status="supported"),
+            VersionEntry(value="16", label="LLVM 16", status="eol"),
+        ]
+        return PluginCatalog(
+            plugin=self.id,
+            versions=versions,
+            defaults={"llvm": "19"},
+        )
 
     def coder_parameters(self, catalog: PluginCatalog) -> list[ParameterSpec]:
-        """Produce Coder parameters for C/C++ LLVM version selection."""
-        versions = catalog.versions
-        default_llvm = catalog.defaults.get("llvm", "latest")
         return [
             ParameterSpec(
                 name="cpp_llvm",
-                display_name="LLVM/Clangd Version",
+                display_name="LLVM / Clang Version",
                 type="string",
                 form_type="dropdown",
-                default=default_llvm,
+                default=catalog.defaults.get("llvm", "19"),
                 mutable=False,
-                order=400,
-                options=versions,
-                condition="contains(data.coder_parameter.languages.value, 'cpp')",
+                order=40,
+                condition='contains(data.coder_parameter.languages.value, "cpp")',
+                options=catalog.versions,
             ),
         ]
 
-    def runtime_plan(self, selection: dict[str, str | list[str]]) -> RuntimePlan:
-        """Produce runtime actions for C/C++ workspace setup.
-
-        LLVM/clangd is pre-installed in the base image.  This plugin
-        records the selection for activation and ensures cache directories
-        exist.  When a non-prebundled LLVM version is selected the runtime
-        must install it into the workspace volume (handled at a later
-        stage via the catalog).
-        """
-        llvm = str(selection.get("llvm", "latest"))
-        root = f"{_CDEV}/toolchains/llvm/{llvm}"
-
+    def runtime_plan(self, selection: dict) -> RuntimePlan:
+        llvm = str(selection.get("llvm", "19"))
+        root = f"/workspace/.cdev/toolchains/llvm/{llvm}"
+        is_prebundled = llvm == "19"
+        actions: list[RuntimeAction] = [
+            RuntimeAction(
+                id="cpp-cache-ccache",
+                type="ensure_dir",
+                values={"path": "/workspace/.cdev/cache/ccache"},
+            ),
+            RuntimeAction(
+                id="cpp-llvm-dir",
+                type="ensure_dir",
+                values={"path": root},
+            ),
+        ]
+        if not is_prebundled:
+            actions.append(
+                RuntimeAction(
+                    id="cpp-llvm-path",
+                    type="path_prepend",
+                    values={"path": f"{root}/usr/bin"},
+                )
+            )
+        actions.append(
+            RuntimeAction(
+                id="cpp-verify",
+                type="verify_command",
+                command=["clangd", "--version"],
+                critical=False,
+            )
+        )
         return RuntimePlan(
             plugin=self.id,
             env={
-                "CCACHE_DIR": f"{_CDEV}/cache/ccache",
-                "LLVM_VERSION": llvm,
+                "CCACHE_DIR": "/workspace/.cdev/cache/ccache",
             },
-            actions=[
-                RuntimeAction(
-                    id="cpp-ensure-ccache",
-                    type="ensure_dir",
-                    values={"path": f"{_CDEV}/cache/ccache"},
-                ),
-                RuntimeAction(
-                    id="cpp-ensure-llvm-dir",
-                    type="ensure_dir",
-                    values={"path": root},
-                ),
-                RuntimeAction(
-                    id="cpp-llvm-path-prepend",
-                    type="path_prepend",
-                    values={"path": f"{root}/usr/bin"},
-                ),
-                RuntimeAction(
-                    id="cpp-verify-clangd",
-                    type="verify_command",
-                    command=["clangd", "--version"],
-                    critical=False,
-                ),
-            ],
+            actions=actions,
         )

@@ -1,62 +1,89 @@
 from __future__ import annotations
 
-from codervps.models import ParameterSpec, PluginCatalog, RuntimeAction, RuntimePlan
-
-_CDEV = "/workspace/.cdev"
+from codervps.models import ParameterSpec, PluginCatalog, RuntimeAction, RuntimePlan, VersionEntry
 
 
 class RustPlugin:
-    id: str = "rust"
-    label: str = "Rust"
+    id = "rust"
+    label = "Rust"
 
-    def discover(self) -> PluginCatalog:
-        """Discover available Rust toolchains from the rustup catalog."""
-        raise NotImplementedError("catalog discovery is implemented in catalog.py")
+    def discover(self, fixture_dir=None) -> PluginCatalog:
+        versions = [
+            VersionEntry(value="stable", label="Stable", default=True, status="active"),
+            VersionEntry(value="beta", label="Beta", status="supported"),
+            VersionEntry(value="nightly", label="Nightly", status="supported"),
+            VersionEntry(value="1.85.0", label="1.85.0", status="supported"),
+            VersionEntry(value="1.84.0", label="1.84.0", status="supported"),
+            VersionEntry(value="1.83.0", label="1.83.0", status="supported"),
+            VersionEntry(value="1.82.0", label="1.82.0", status="supported"),
+            VersionEntry(value="1.81.0", label="1.81.0", status="supported"),
+        ]
+        return PluginCatalog(
+            plugin=self.id,
+            versions=versions,
+            defaults={"toolchain": "stable"},
+        )
 
     def coder_parameters(self, catalog: PluginCatalog) -> list[ParameterSpec]:
-        """Produce Coder parameters for Rust toolchain selection."""
-        versions = catalog.versions
-        default_tc = catalog.defaults.get("toolchain", "stable")
         return [
             ParameterSpec(
                 name="rust_toolchain",
                 display_name="Rust Toolchain",
                 type="string",
                 form_type="dropdown",
-                default=default_tc,
+                default="stable",
                 mutable=False,
-                order=200,
-                options=versions,
-                condition="contains(data.coder_parameter.languages.value, 'rust')",
+                order=20,
+                condition='contains(data.coder_parameter.languages.value, "rust")',
+                options=catalog.versions,
             ),
         ]
 
-    def runtime_plan(self, selection: dict[str, str | list[str]]) -> RuntimePlan:
-        """Produce runtime actions to install the selected Rust toolchain."""
+    def runtime_plan(self, selection: dict) -> RuntimePlan:
         toolchain = str(selection.get("toolchain", "stable"))
-
         return RuntimePlan(
             plugin=self.id,
             env={
-                "RUSTUP_HOME": f"{_CDEV}/toolchains/rust/rustup",
-                "CARGO_HOME": f"{_CDEV}/toolchains/rust/cargo",
-                "CARGO_INSTALL_ROOT": f"{_CDEV}/toolchains/rust/cargo-install",
-                "SCCACHE_DIR": f"{_CDEV}/cache/sccache",
+                "RUSTUP_HOME": "/workspace/.cdev/toolchains/rust/rustup",
+                "CARGO_HOME": "/workspace/.cdev/toolchains/rust/cargo",
+                "CARGO_INSTALL_ROOT": "/workspace/.cdev/toolchains/rust/cargo-install",
+                "SCCACHE_DIR": "/workspace/.cdev/cache/sccache",
                 "RUSTC_WRAPPER": "sccache",
             },
             actions=[
                 RuntimeAction(
-                    id="rust-ensure-sccache-cache",
+                    id="rust-cache-sccache",
                     type="ensure_dir",
-                    values={"path": f"{_CDEV}/cache/sccache"},
+                    values={"path": "/workspace/.cdev/cache/sccache"},
                 ),
                 RuntimeAction(
-                    id="rust-install-toolchain",
+                    id="rust-toolchains-dir",
+                    type="ensure_dir",
+                    values={"path": "/workspace/.cdev/toolchains/rust/rustup"},
+                ),
+                RuntimeAction(
+                    id="rust-cargo-dir",
+                    type="ensure_dir",
+                    values={"path": "/workspace/.cdev/toolchains/rust/cargo"},
+                ),
+                RuntimeAction(
+                    id="rust-install",
                     type="run",
-                    command=["rustup", "toolchain", "install", toolchain, "--profile", "minimal"],
+                    command=[
+                        "rustup",
+                        "toolchain",
+                        "install",
+                        toolchain,
+                        "--profile",
+                        "minimal",
+                    ],
+                    env={
+                        "RUSTUP_HOME": "/workspace/.cdev/toolchains/rust/rustup",
+                        "CARGO_HOME": "/workspace/.cdev/toolchains/rust/cargo",
+                    },
                 ),
                 RuntimeAction(
-                    id="rust-add-components",
+                    id="rust-components",
                     type="run",
                     command=[
                         "rustup",
@@ -68,16 +95,30 @@ class RustPlugin:
                         "--toolchain",
                         toolchain,
                     ],
+                    env={
+                        "RUSTUP_HOME": "/workspace/.cdev/toolchains/rust/rustup",
+                        "CARGO_HOME": "/workspace/.cdev/toolchains/rust/cargo",
+                    },
                 ),
                 RuntimeAction(
-                    id="rust-set-default",
+                    id="rust-default",
                     type="run",
                     command=["rustup", "default", toolchain],
+                    env={
+                        "RUSTUP_HOME": "/workspace/.cdev/toolchains/rust/rustup",
+                        "CARGO_HOME": "/workspace/.cdev/toolchains/rust/cargo",
+                    },
+                ),
+                RuntimeAction(
+                    id="rust-path",
+                    type="path_prepend",
+                    values={"path": "/workspace/.cdev/toolchains/rust/cargo/bin"},
                 ),
                 RuntimeAction(
                     id="rust-verify",
                     type="verify_command",
                     command=["rustc", "--version"],
+                    critical=True,
                 ),
             ],
         )

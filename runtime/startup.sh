@@ -1,69 +1,53 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# CoderVPS workspace startup entrypoint.
-#
-# This script is sourced by the Coder agent.  It:
-#   1. Initialises /workspace/.cdev (configurable via CDEV_RUNTIME_ROOT).
-#   2. Acquires an exclusive startup lock (flock).
-#   3. Validates immutable selection hashes.
-#   4. Delegates to the Python action runner for plan execution.
-
-# ---- Configurable root ----
-: "${CDEV_RUNTIME_ROOT:=/workspace/.cdev}"
-
-_CDEV="$CDEV_RUNTIME_ROOT"
+# CDEV_RUNTIME_ROOT is configurable for tests, defaults to /workspace/.cdev
+export CDEV_RUNTIME_ROOT="${CDEV_RUNTIME_ROOT:-/workspace/.cdev}"
 
 mkdir -p \
-  "$_CDEV/downloads" \
-  "$_CDEV/toolchains" \
-  "$_CDEV/cache" \
-  "$_CDEV/logs" \
-  "$_CDEV/tmp" \
-  "$_CDEV/locks" \
-  "$_CDEV/state" \
-  "$_CDEV/bin"
+  "$CDEV_RUNTIME_ROOT/downloads" \
+  "$CDEV_RUNTIME_ROOT/toolchains" \
+  "$CDEV_RUNTIME_ROOT/cache" \
+  "$CDEV_RUNTIME_ROOT/logs" \
+  "$CDEV_RUNTIME_ROOT/tmp" \
+  "$CDEV_RUNTIME_ROOT/locks" \
+  "$CDEV_RUNTIME_ROOT/state" \
+  "$CDEV_RUNTIME_ROOT/bin"
 
-# ---- Exclusive startup lock ----
-exec 9>"$_CDEV/locks/startup.lock"
-if ! flock -n 9; then
-  echo "CoderVPS: another startup is already running" >&2
+exec 9>"$CDEV_RUNTIME_ROOT/locks/startup.lock"
+flock -n 9 || {
+  echo "another CoderVPS startup is already running" >&2
   exit 1
-fi
+}
 
-# Clean up temp selection files on exit
-trap 'rm -f "$_CDEV/selection.new.json" "$_CDEV/selection.new.sha256"' EXIT
+# Cleanup temp files on exit
+trap 'rm -f "$CDEV_RUNTIME_ROOT/selection.new.json" "$CDEV_RUNTIME_ROOT/selection.new.sha256"' EXIT
 
-# ---- Immutable selection check ----
+# Verify immutable workspace selections if provided
 if [[ -n "${CDEV_SELECTION_JSON:-}" ]]; then
-  printf '%s\n' "$CDEV_SELECTION_JSON" > "$_CDEV/selection.new.json"
-  sha256sum "$_CDEV/selection.new.json" | awk '{print $1}' > "$_CDEV/selection.new.sha256"
-  if [[ -f "$_CDEV/selection.sha256" ]]; then
-    if ! cmp -s "$_CDEV/selection.new.sha256" "$_CDEV/selection.sha256"; then
-      echo "CoderVPS: immutable workspace selection changed; refusing startup" >&2
+  printf '%s\n' "$CDEV_SELECTION_JSON" > "$CDEV_RUNTIME_ROOT/selection.new.json"
+  sha256sum "$CDEV_RUNTIME_ROOT/selection.new.json" | awk '{print $1}' > "$CDEV_RUNTIME_ROOT/selection.new.sha256"
+  if [[ -f "$CDEV_RUNTIME_ROOT/selection.sha256" ]]; then
+    if ! cmp -s "$CDEV_RUNTIME_ROOT/selection.new.sha256" "$CDEV_RUNTIME_ROOT/selection.sha256"; then
+      echo "immutable workspace selection changed; refusing startup" >&2
       exit 1
     fi
   fi
-  mv "$_CDEV/selection.new.json" "$_CDEV/selection.json"
-  mv "$_CDEV/selection.new.sha256" "$_CDEV/selection.sha256"
+  mv "$CDEV_RUNTIME_ROOT/selection.new.json" "$CDEV_RUNTIME_ROOT/selection.json"
+  mv "$CDEV_RUNTIME_ROOT/selection.new.sha256" "$CDEV_RUNTIME_ROOT/selection.sha256"
 fi
 
-# ---- Source the action library (provides cdev_run_actions) ----
-# The runtime lib files are mounted read-only at /opt/cde/runtime.
-if [[ -f /opt/cde/runtime/lib/actions.sh ]]; then
-  # shellcheck source=/dev/null
-  source /opt/cde/runtime/lib/actions.sh
+# Load the actions library
+RUNTIME_LIB_DIR="${RUNTIME_LIB_DIR:-/opt/cde/runtime/lib}"
+# shellcheck source=/dev/null
+source "$RUNTIME_LIB_DIR/actions.sh"
+
+# Execute runtime plan if it exists
+if [[ -f "$CDEV_RUNTIME_ROOT/runtime-plan.json" ]]; then
+  cdev_run_actions "$CDEV_RUNTIME_ROOT/runtime-plan.json"
 fi
 
-# ---- Execute the runtime plan ----
-if [[ -f "$_CDEV/runtime-plan.json" ]]; then
-  cdev_run_actions "$_CDEV/runtime-plan.json"
-fi
-
-# ---- Write env activation snippet ----
-cat > "$_CDEV/env.sh" <<'ENVEOF'
-#!/usr/bin/env bash
-# Source this file to activate workspace toolchains.
-export PATH="/workspace/.cdev/bin:$PATH"
+# Write env.sh for future sourcing
+cat > "$CDEV_RUNTIME_ROOT/env.sh" <<'ENVEOF'
+export PATH="$CDEV_RUNTIME_ROOT/bin:$PATH"
 ENVEOF
-chmod +x "$_CDEV/env.sh"

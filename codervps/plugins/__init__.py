@@ -16,24 +16,7 @@ _PLUGIN_TYPES: dict[str, type] = {
 
 
 def load_plugins(enabled: list[str]) -> list[ToolchainPlugin]:
-    """Instantiate enabled plugins in the given order.
-
-    Raises ValueError if any name in ``enabled`` is unknown.
-    """
     missing = [name for name in enabled if name not in _PLUGIN_TYPES]
     if missing:
         raise ValueError(f"unknown plugins: {', '.join(missing)}")
     return [_PLUGIN_TYPES[name]() for name in enabled]
-
-
-def get_plugin(name: str) -> ToolchainPlugin:
-    """Return the single plugin instance for *name*.
-
-    Raises ValueError if the plugin name is unknown.
-    """
-    if name not in _PLUGIN_TYPES:
-        raise ValueError(f"unknown plugin: {name}")
-    return _PLUGIN_TYPES[name]()
-
-
-__all__ = ["get_plugin", "load_plugins"]

@@ -1,80 +1,155 @@
 from __future__ import annotations
 
-from codervps.models import ParameterSpec, PluginCatalog, RuntimeAction, RuntimePlan
+import json
+from pathlib import Path
 
-_CDEV = "/workspace/.cdev"
+from codervps.models import ParameterSpec, PluginCatalog, RuntimeAction, RuntimePlan, VersionEntry
 
 
 class GoPlugin:
-    id: str = "go"
-    label: str = "Go"
+    id = "go"
+    label = "Go"
 
-    def discover(self) -> PluginCatalog:
-        """Discover available Go versions from go.dev/dl metadata."""
-        raise NotImplementedError("catalog discovery is implemented in catalog.py")
+    def discover(self, fixture_dir=None) -> PluginCatalog:
+        if fixture_dir:
+            data = json.loads((Path(fixture_dir) / "go-dl.json").read_text())
+        else:
+            data = self._default_go_versions()
+        versions = []
+        for item in data:
+            ver = item["version"]
+            version_str = ver.removeprefix("go")
+            stable = item.get("stable", False)
+            versions.append(
+                VersionEntry(
+                    value=version_str,
+                    label=f"Go {version_str}",
+                    status="active" if stable else "prerelease",
+                    default=(version_str == "1.24.9"),
+                )
+            )
+        if not any(v.default for v in versions) and versions:
+            versions_without_default = [
+                VersionEntry(
+                    value=v.value,
+                    label=v.label,
+                    status=v.status,
+                    default=(i == 0),
+                    metadata=v.metadata,
+                )
+                for i, v in enumerate(versions)
+            ]
+            return PluginCatalog(
+                plugin=self.id,
+                versions=versions_without_default,
+                defaults={"version": versions[0].value},
+            )
+        first_stable = next(
+            (v for v in versions if v.status == "active"), versions[0] if versions else None
+        )
+        return PluginCatalog(
+            plugin=self.id,
+            versions=versions,
+            defaults={"version": first_stable.value if first_stable else "1.24.9"},
+        )
+
+    @staticmethod
+    def _default_go_versions() -> list[dict]:
+        return [
+            {
+                "version": "go1.26.3",
+                "stable": True,
+                "files": [{"filename": "go1.26.3.linux-amd64.tar.gz", "sha256": "sha-go-1263"}],
+            },
+            {
+                "version": "go1.25.5",
+                "stable": True,
+                "files": [{"filename": "go1.25.5.linux-amd64.tar.gz", "sha256": "sha-go-1255"}],
+            },
+            {
+                "version": "go1.24.9",
+                "stable": True,
+                "files": [{"filename": "go1.24.9.linux-amd64.tar.gz", "sha256": "sha-go-1249"}],
+            },
+            {
+                "version": "go1.23.12",
+                "stable": True,
+                "files": [{"filename": "go1.23.12.linux-amd64.tar.gz", "sha256": "sha-go-12312"}],
+            },
+            {
+                "version": "go1.22.12",
+                "stable": True,
+                "files": [{"filename": "go1.22.12.linux-amd64.tar.gz", "sha256": "sha-go-12212"}],
+            },
+        ]
 
     def coder_parameters(self, catalog: PluginCatalog) -> list[ParameterSpec]:
-        """Produce Coder parameters for Go version and optional tools."""
-        versions = catalog.versions
-        default_ver = catalog.defaults.get("version", "latest")
         return [
             ParameterSpec(
                 name="go_version",
                 display_name="Go Version",
                 type="string",
                 form_type="dropdown",
-                default=default_ver,
+                default=catalog.defaults.get("version", "1.24.9"),
                 mutable=False,
-                order=300,
-                options=versions,
-                condition="contains(data.coder_parameter.languages.value, 'go')",
+                order=30,
+                condition='contains(data.coder_parameter.languages.value, "go")',
+                options=catalog.versions,
             ),
             ParameterSpec(
                 name="go_tools",
                 display_name="Go Tools",
                 type="list(string)",
                 form_type="multi-select",
-                default=catalog.defaults.get("tools", '["gopls"]'),
+                default='["gopls"]',
                 mutable=False,
-                order=301,
-                condition="contains(data.coder_parameter.languages.value, 'go')",
+                order=31,
+                condition='contains(data.coder_parameter.languages.value, "go")',
+                options=[
+                    VersionEntry(value="gopls", label="gopls"),
+                    VersionEntry(value="dlv", label="dlv (Delve debugger)"),
+                ],
             ),
         ]
 
-    def runtime_plan(self, selection: dict[str, str | list[str]]) -> RuntimePlan:
-        """Produce runtime actions to download and install Go."""
+    def runtime_plan(self, selection: dict) -> RuntimePlan:
         version = str(selection["version"])
-        tools_raw = selection.get("tools", ["gopls"])
-        tools: list[str] = [tools_raw] if isinstance(tools_raw, str) else list(tools_raw)
+        tools = selection.get("tools", ["gopls"])
+        if isinstance(tools, str):
+            tools = [tools]
         gopls_version = str(selection.get("gopls_version", "latest"))
         dlv_version = str(selection.get("dlv_version", "latest"))
-
-        root = f"{_CDEV}/toolchains/go/{version}"
-        tarball = f"{_CDEV}/downloads/go{version}.linux-amd64.tar.gz"
-
-        # Pull sha256 from selection metadata if available (from go_downloads)
-        sha256 = str(selection.get("sha256", ""))
-
+        root = f"/workspace/.cdev/toolchains/go/{version}"
+        tarball = f"/workspace/.cdev/downloads/go{version}.linux-amd64.tar.gz"
+        url = f"https://go.dev/dl/go{version}.linux-amd64.tar.gz"
         actions: list[RuntimeAction] = [
             RuntimeAction(
-                id="go-ensure-downloads",
+                id="go-downloads-dir",
                 type="ensure_dir",
-                values={"path": f"{_CDEV}/downloads"},
+                values={"path": "/workspace/.cdev/downloads"},
+            ),
+            RuntimeAction(
+                id="go-cache-dir",
+                type="ensure_dir",
+                values={"path": "/workspace/.cdev/cache/go/build"},
+            ),
+            RuntimeAction(
+                id="go-cache-mod-dir",
+                type="ensure_dir",
+                values={"path": "/workspace/.cdev/cache/go/pkg/mod"},
             ),
             RuntimeAction(
                 id="go-download",
                 type="download",
-                critical=True,
                 values={
-                    "url": f"https://go.dev/dl/go{version}.linux-amd64.tar.gz",
+                    "url": url,
                     "dest": tarball,
-                    "sha256": sha256 if sha256 else None,
+                    "sha256": "auto",
                 },
             ),
             RuntimeAction(
                 id="go-extract",
                 type="extract_tar",
-                critical=True,
                 creates=f"{root}/bin/go",
                 values={
                     "src": tarball,
@@ -83,24 +158,33 @@ class GoPlugin:
                 },
             ),
             RuntimeAction(
-                id="go-path-prepend",
+                id="go-path",
                 type="path_prepend",
-                critical=True,
                 values={"path": f"{root}/bin"},
+            ),
+            RuntimeAction(
+                id="go-bin-path",
+                type="path_prepend",
+                values={"path": "/workspace/.cdev/toolchains/go/bin"},
             ),
             RuntimeAction(
                 id="go-verify",
                 type="verify_command",
                 command=["go", "version"],
+                critical=True,
             ),
         ]
-
         if "gopls" in tools:
             actions.append(
                 RuntimeAction(
                     id="go-tool-gopls",
                     type="run",
                     command=["go", "install", f"golang.org/x/tools/gopls@{gopls_version}"],
+                    env={
+                        "GOROOT": root,
+                        "GOBIN": "/workspace/.cdev/toolchains/go/bin",
+                        "GOPATH": "/workspace/.cdev/cache/go/gopath",
+                    },
                 )
             )
         if "dlv" in tools:
@@ -109,17 +193,21 @@ class GoPlugin:
                     id="go-tool-dlv",
                     type="run",
                     command=["go", "install", f"github.com/go-delve/delve/cmd/dlv@{dlv_version}"],
+                    env={
+                        "GOROOT": root,
+                        "GOBIN": "/workspace/.cdev/toolchains/go/bin",
+                        "GOPATH": "/workspace/.cdev/cache/go/gopath",
+                    },
                 )
             )
-
         return RuntimePlan(
             plugin=self.id,
             actions=actions,
             env={
                 "GOROOT": root,
-                "GOBIN": f"{_CDEV}/toolchains/go/bin",
-                "GOCACHE": f"{_CDEV}/cache/go/build",
-                "GOMODCACHE": f"{_CDEV}/cache/go/pkg/mod",
-                "GOPATH": f"{_CDEV}/cache/go/gopath",
+                "GOBIN": "/workspace/.cdev/toolchains/go/bin",
+                "GOCACHE": "/workspace/.cdev/cache/go/build",
+                "GOMODCACHE": "/workspace/.cdev/cache/go/pkg/mod",
+                "GOPATH": "/workspace/.cdev/cache/go/gopath",
             },
         )

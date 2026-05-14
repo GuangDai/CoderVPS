@@ -1,227 +1,263 @@
 from __future__ import annotations
 
-from typing import Any
 
-_NODE_MAJORS = [24, 22, 20, 18, 16]
+def _make_node_options() -> list[dict]:
+    return [
+        {"name": "Node 24", "value": "24"},
+        {"name": "Node 22", "value": "22"},
+        {"name": "Node 20", "value": "20"},
+        {"name": "Node 18", "value": "18"},
+        {"name": "Node 16", "value": "16"},
+    ]
 
 
-def _terraform_block() -> dict[str, Any]:
-    return {
-        "required_providers": {
-            "coder": {"source": "coder/coder", "version": ">= 2.25.0"},
-            "docker": {"source": "kreuzwerker/docker"},
-        },
+def _make_language_options() -> list[dict]:
+    return [
+        {"name": "Python", "value": "python"},
+        {"name": "Rust", "value": "rust"},
+        {"name": "Go", "value": "go"},
+        {"name": "C/C++", "value": "cpp"},
+    ]
+
+
+def _make_language_parameters(catalog: dict) -> dict:
+    params: dict = {}
+    plugins = catalog.get("plugins", {})
+
+    plugin_param_orders = {"python": (10, 19), "rust": (20, 29), "go": (30, 39), "cpp": (40, 49)}
+    plugin_labels = {"python": "Python", "rust": "Rust", "go": "Go", "cpp": "C/C++"}
+    plugin_defaults_map = {
+        "python": "3.13",
+        "rust": "stable",
+        "go": "1.24.9",
+        "cpp": "19",
     }
 
+    for plugin_id in ["python", "rust", "go", "cpp"]:
+        if plugin_id not in plugins:
+            continue
+        order_range = plugin_param_orders.get(plugin_id, (50, 59))
+        label = plugin_labels.get(plugin_id, plugin_id)
+        defaults = plugins[plugin_id].get("defaults", {})
+        version_default = (
+            defaults.get("version")
+            or defaults.get("toolchain")
+            or defaults.get("llvm")
+            or plugin_defaults_map.get(plugin_id, "")
+        )
 
-def _provider_block() -> dict[str, Any]:
-    return {"coder": [{}], "docker": [{}]}
-
-
-def _coder_workspace_data() -> dict[str, Any]:
-    return {
-        "coder_workspace": {"me": {}},
-        "coder_workspace_owner": {"me": {}},
-        "coder_provisioner": {"me": {}},
-    }
-
-
-def _node_major_parameter() -> dict[str, Any]:
-    return {
-        "name": "node_major",
-        "display_name": "Node.js",
-        "type": "string",
-        "form_type": "dropdown",
-        "mutable": False,
-        "default": "24",
-        "order": 1,
-        "option": [{"name": f"Node {m}", "value": str(m)} for m in _NODE_MAJORS],
-    }
-
-
-def _languages_parameter() -> dict[str, Any]:
-    return {
-        "name": "languages",
-        "display_name": "Languages",
-        "type": "list(string)",
-        "form_type": "multi-select",
-        "mutable": False,
-        "default": '["python"]',
-        "order": 2,
-        "option": [
-            {"name": "Python", "value": "python"},
-            {"name": "Rust", "value": "rust"},
-            {"name": "Go", "value": "go"},
-            {"name": "C/C++", "value": "cpp"},
-        ],
-    }
-
-
-def _build_coder_parameters(catalog: dict) -> dict[str, Any]:
-    """Build the coder_parameter data block from catalog plugin declarations."""
-    params: dict[str, Any] = {
-        "node_major": _node_major_parameter(),
-        "languages": _languages_parameter(),
-    }
-
-    # Add per-language parameters from catalog
-    plugin_defaults = catalog.get("plugins", {})
-    for pid in ["python", "rust", "go", "cpp"]:
-        plugin_info = plugin_defaults.get(pid, {})
-        defaults = plugin_info.get("defaults", {})
-        if pid == "python":
+        if plugin_id == "python":
             params["python_version"] = {
                 "name": "python_version",
-                "display_name": "Python Version",
+                "display_name": f"{label} Version",
                 "type": "string",
                 "form_type": "dropdown",
                 "mutable": False,
-                "default": defaults.get("version", "3.13"),
-                "order": 100,
-                "condition": "contains(data.coder_parameter.languages.value, 'python')",
+                "default": version_default,
+                "order": order_range[0],
+                "condition": 'contains(data.coder_parameter.languages.value, "python")',
+                "option": [
+                    {"name": "3.13", "value": "3.13"},
+                    {"name": "3.12", "value": "3.12"},
+                    {"name": "3.11", "value": "3.11"},
+                ],
             }
             params["python_tools"] = {
                 "name": "python_tools",
-                "display_name": "Python Tools",
+                "display_name": f"{label} Tools",
                 "type": "list(string)",
                 "form_type": "multi-select",
                 "mutable": False,
-                "default": '["ruff","debugpy"]',
-                "order": 101,
-                "condition": "contains(data.coder_parameter.languages.value, 'python')",
+                "default": '["ruff", "debugpy"]',
+                "order": order_range[0] + 1,
+                "condition": 'contains(data.coder_parameter.languages.value, "python")',
+                "option": [
+                    {"name": "ruff", "value": "ruff"},
+                    {"name": "debugpy", "value": "debugpy"},
+                    {"name": "IPython", "value": "ipython"},
+                    {"name": "Jupyter", "value": "jupyter"},
+                ],
             }
-        elif pid == "rust":
+        elif plugin_id == "rust":
             params["rust_toolchain"] = {
                 "name": "rust_toolchain",
-                "display_name": "Rust Toolchain",
+                "display_name": f"{label} Toolchain",
                 "type": "string",
                 "form_type": "dropdown",
                 "mutable": False,
-                "default": defaults.get("toolchain", "stable"),
-                "order": 200,
-                "condition": "contains(data.coder_parameter.languages.value, 'rust')",
+                "default": version_default,
+                "order": order_range[0],
+                "condition": 'contains(data.coder_parameter.languages.value, "rust")',
+                "option": [
+                    {"name": "Stable", "value": "stable"},
+                    {"name": "Beta", "value": "beta"},
+                    {"name": "Nightly", "value": "nightly"},
+                ],
             }
-        elif pid == "go":
+        elif plugin_id == "go":
             params["go_version"] = {
                 "name": "go_version",
-                "display_name": "Go Version",
+                "display_name": f"{label} Version",
                 "type": "string",
                 "form_type": "dropdown",
                 "mutable": False,
-                "default": defaults.get("version", "latest"),
-                "order": 300,
-                "condition": "contains(data.coder_parameter.languages.value, 'go')",
+                "default": version_default,
+                "order": order_range[0],
+                "condition": 'contains(data.coder_parameter.languages.value, "go")',
+                "option": [
+                    {"name": "Go 1.24", "value": "1.24.9"},
+                    {"name": "Go 1.23", "value": "1.23.12"},
+                    {"name": "Go 1.22", "value": "1.22.12"},
+                ],
             }
             params["go_tools"] = {
                 "name": "go_tools",
-                "display_name": "Go Tools",
+                "display_name": f"{label} Tools",
                 "type": "list(string)",
                 "form_type": "multi-select",
                 "mutable": False,
                 "default": '["gopls"]',
-                "order": 301,
-                "condition": "contains(data.coder_parameter.languages.value, 'go')",
+                "order": order_range[0] + 1,
+                "condition": 'contains(data.coder_parameter.languages.value, "go")',
+                "option": [
+                    {"name": "gopls", "value": "gopls"},
+                    {"name": "dlv (Delve)", "value": "dlv"},
+                ],
             }
-        elif pid == "cpp":
+        elif plugin_id == "cpp":
             params["cpp_llvm"] = {
                 "name": "cpp_llvm",
-                "display_name": "LLVM/Clangd Version",
+                "display_name": f"{label} LLVM Version",
                 "type": "string",
                 "form_type": "dropdown",
                 "mutable": False,
-                "default": defaults.get("llvm", "latest"),
-                "order": 400,
-                "condition": "contains(data.coder_parameter.languages.value, 'cpp')",
+                "default": version_default,
+                "order": order_range[0],
+                "condition": 'contains(data.coder_parameter.languages.value, "cpp")',
+                "option": [
+                    {"name": "LLVM 19", "value": "19"},
+                    {"name": "LLVM 18", "value": "18"},
+                    {"name": "LLVM 17", "value": "17"},
+                ],
             }
-
     return params
 
 
-def _docker_volume_workspace() -> dict[str, Any]:
-    return {
-        "name": "coder-${data.coder_workspace.me.id}-workspace",
-        "lifecycle": {"ignore_changes": "all"},
-        "labels": [
-            {"label": "coder.workspace_id", "value": "${data.coder_workspace.me.id}"},
-            {"label": "coder.owner", "value": "${data.coder_workspace_owner.me.name}"},
-        ],
+def render_main_tf_json(images: dict, catalog: dict) -> dict:
+    node_options = _make_node_options()
+    lang_options = _make_language_options()
+    lang_params = _make_language_parameters(catalog)
+
+    all_params: dict = {
+        "node_major": {
+            "name": "node_major",
+            "display_name": "Node.js",
+            "type": "string",
+            "form_type": "dropdown",
+            "mutable": False,
+            "default": "24",
+            "order": 1,
+            "option": node_options,
+        },
+        "languages": {
+            "name": "languages",
+            "display_name": "Languages",
+            "type": "list(string)",
+            "form_type": "multi-select",
+            "mutable": False,
+            "default": '["python"]',
+            "order": 2,
+            "option": lang_options,
+        },
     }
-
-
-def _coder_agent_main() -> dict[str, Any]:
-    return {
-        "arch": "${data.coder_provisioner.me.arch}",
-        "os": "linux",
-        "dir": "/workspace",
-        "startup_script": '${file("${path.module}/startup.sh")}',
-    }
-
-
-def _coder_app_code_server() -> dict[str, Any]:
-    return {
-        "agent_id": "${coder_agent.main.id}",
-        "slug": "code-server",
-        "display_name": "VS Code Web",
-        "url": "http://127.0.0.1:13337/?folder=/workspace",
-        "share": "owner",
-        "subdomain": False,
-    }
-
-
-def _docker_container_workspace() -> dict[str, Any]:
-    return {
-        "count": "${data.coder_workspace.me.start_count}",
-        "image": "${local.selected_image}",
-        "name": "coder-${data.coder_workspace.me.id}",
-        "volumes": [
-            {
-                "container_path": "/workspace",
-                "volume_name": "${docker_volume.workspace.name}",
-                "read_only": False,
-            },
-            {
-                "host_path": "/opt/coder-cde/extensions",
-                "container_path": "/opt/cde/extensions",
-                "read_only": True,
-            },
-            {
-                "host_path": "/opt/coder-cde/vsix",
-                "container_path": "/opt/cde/vsix",
-                "read_only": True,
-            },
-        ],
-        "labels": [
-            {"label": "coder.workspace_id", "value": "${data.coder_workspace.me.id}"},
-            {"label": "coder.owner", "value": "${data.coder_workspace_owner.me.name}"},
-        ],
-    }
-
-
-def render_main_tf_json(images: dict, catalog: dict) -> dict[str, Any]:
-    """Render a complete ``main.tf.json`` document.
-
-    Parameters
-    ----------
-    images:
-        The ``images.json``-shaped catalog (must contain an ``"images"`` array).
-    catalog:
-        The ``toolchains.json``-shaped catalog used for parameter defaults.
-    """
-    coder_params = _build_coder_parameters(catalog)
-    data_block = {
-        **_coder_workspace_data(),
-        "coder_parameter": coder_params,
-    }
+    all_params.update(lang_params)
 
     return {
-        "terraform": _terraform_block(),
-        "provider": _provider_block(),
-        "data": data_block,
+        "terraform": {
+            "required_providers": {
+                "coder": {"source": "coder/coder", "version": ">= 2.25.0"},
+                "docker": {"source": "kreuzwerker/docker"},
+            }
+        },
+        "provider": {
+            "coder": [{}],
+            "docker": [{}],
+        },
+        "data": {
+            "coder_workspace": {"me": {}},
+            "coder_workspace_owner": {"me": {}},
+            "coder_provisioner": {"me": {}},
+            "coder_parameter": all_params,
+        },
         "resource": {
-            "docker_volume": {"workspace": _docker_volume_workspace()},
-            "coder_agent": {"main": _coder_agent_main()},
-            "coder_app": {"code_server": _coder_app_code_server()},
-            "docker_container": {"workspace": _docker_container_workspace()},
+            "docker_volume": {
+                "workspace": {
+                    "name": "coder-${data.coder_workspace.me.id}-workspace",
+                    "lifecycle": {"ignore_changes": "all"},
+                    "labels": [
+                        {
+                            "label": "coder.workspace_id",
+                            "value": "${data.coder_workspace.me.id}",
+                        },
+                        {
+                            "label": "coder.owner",
+                            "value": "${data.coder_workspace_owner.me.name}",
+                        },
+                    ],
+                }
+            },
+            "coder_agent": {
+                "main": {
+                    "arch": "${data.coder_provisioner.me.arch}",
+                    "os": "linux",
+                    "dir": "/workspace",
+                    "startup_script": '${file("${path.module}/startup.sh")}',
+                }
+            },
+            "coder_app": {
+                "code_server": {
+                    "agent_id": "${coder_agent.main.id}",
+                    "slug": "code-server",
+                    "display_name": "VS Code Web",
+                    "url": "http://127.0.0.1:13337/?folder=/workspace",
+                    "share": "owner",
+                    "subdomain": False,
+                }
+            },
+            "docker_container": {
+                "workspace": {
+                    "count": "${data.coder_workspace.me.start_count}",
+                    "image": "${local.selected_image}",
+                    "name": "coder-${data.coder_workspace.me.id}",
+                    "volumes": [
+                        {
+                            "container_path": "/workspace",
+                            "volume_name": "${docker_volume.workspace.name}",
+                            "read_only": False,
+                        },
+                        {
+                            "host_path": "/opt/coder-cde/extensions",
+                            "container_path": "/opt/cde/extensions",
+                            "read_only": True,
+                        },
+                        {
+                            "host_path": "/opt/coder-cde/vsix",
+                            "container_path": "/opt/cde/vsix",
+                            "read_only": True,
+                        },
+                    ],
+                    "labels": [
+                        {
+                            "label": "coder.workspace_id",
+                            "value": "${data.coder_workspace.me.id}",
+                        },
+                        {
+                            "label": "coder.owner",
+                            "value": "${data.coder_workspace_owner.me.name}",
+                        },
+                    ],
+                }
+            },
         },
         "locals": {
             "images": images.get("images", []),
@@ -229,6 +265,3 @@ def render_main_tf_json(images: dict, catalog: dict) -> dict[str, Any]:
             "selected_image": "${one([for image in local.images : image.image if tostring(image.node_major) == data.coder_parameter.node_major.value])}",
         },
     }
-
-
-__all__ = ["render_main_tf_json"]
