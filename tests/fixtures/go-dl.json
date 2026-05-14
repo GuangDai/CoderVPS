@@ -1,0 +1,44 @@
+[
+  {
+    "version": "go1.26.3",
+    "stable": true,
+    "files": [
+      {"filename": "go1.26.3.linux-amd64.tar.gz", "sha256": "sha-go-linux-amd64-1263", "os": "linux", "arch": "amd64", "kind": "archive"}
+    ]
+  },
+  {
+    "version": "go1.25.5",
+    "stable": true,
+    "files": [
+      {"filename": "go1.25.5.linux-amd64.tar.gz", "sha256": "sha-go-linux-amd64-1255", "os": "linux", "arch": "amd64", "kind": "archive"}
+    ]
+  },
+  {
+    "version": "go1.24.9",
+    "stable": true,
+    "files": [
+      {"filename": "go1.24.9.linux-amd64.tar.gz", "sha256": "sha-go-linux-amd64-1249", "os": "linux", "arch": "amd64", "kind": "archive"}
+    ]
+  },
+  {
+    "version": "go1.23.12",
+    "stable": true,
+    "files": [
+      {"filename": "go1.23.12.linux-amd64.tar.gz", "sha256": "sha-go-linux-amd64-12312", "os": "linux", "arch": "amd64", "kind": "archive"}
+    ]
+  },
+  {
+    "version": "go1.22.12",
+    "stable": true,
+    "files": [
+      {"filename": "go1.22.12.linux-amd64.tar.gz", "sha256": "sha-go-linux-amd64-12212", "os": "linux", "arch": "amd64", "kind": "archive"}
+    ]
+  },
+  {
+    "version": "go1.21.13",
+    "stable": true,
+    "files": [
+      {"filename": "go1.21.13.linux-amd64.tar.gz", "sha256": "sha-go-linux-amd64-12113", "os": "linux", "arch": "amd64", "kind": "archive"}
+    ]
+  }
+]
