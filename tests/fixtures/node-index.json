@@ -1,0 +1,12 @@
+[
+  {"version": "v24.11.1", "lts": "Krypton"},
+  {"version": "v24.10.0", "lts": false},
+  {"version": "v22.21.0", "lts": "Jod"},
+  {"version": "v22.20.0", "lts": false},
+  {"version": "v20.19.5", "lts": "Iron"},
+  {"version": "v20.18.0", "lts": false},
+  {"version": "v18.20.8", "lts": "Hydrogen"},
+  {"version": "v18.19.0", "lts": false},
+  {"version": "v16.20.2", "lts": "Gallium"},
+  {"version": "v16.19.0", "lts": false}
+]
