@@ -194,17 +194,17 @@ After ALL 5 dev agents AND ALL 5 review agents complete a round:
 4. Save this synthesis to memory
 5. The NEXT round's dev agents receive the synthesis in their prompts
 
-### Round 5 Final Merge
+### Round 6 Final Merge
 
-After Round 5's review phase completes:
+After Round 6's review phase completes:
 
-1. Run 5 analysis agents — one per branch: `git checkout task{N}-r5-agent{A} && read files && output structured evaluation`
+1. Run 5 analysis agents — one per branch: `git checkout task{N}-r6-agent{A} && read files && output structured evaluation`
 2. Select the single BEST branch based on: test count, code quality, spec compliance, review consensus
 3. Announce which branch was selected and why
 4. Merge to master:
    ```bash
    git checkout master
-   git merge task{N}-r5-agent{X} --no-edit
+   git merge task{N}-r6-agent{X} --no-edit
    ```
 5. If merge conflicts:
    ```bash
@@ -226,7 +226,7 @@ After Round 5's review phase completes:
 
 ### Cleanup
 
-After a task is fully complete (Round 5 merged):
+After a task is fully complete (Round 6 merged):
 
 ```bash
 # Make sure we are on master
@@ -242,19 +242,16 @@ git branch | grep "task{N}-" | while read branch; do git branch -D "$branch"; do
 
 ### Task Structure
 
-There are 7 merged tasks (Task A through G). Each task combines 2 original plan tasks. Each task requires exactly **5 rounds**. Each round requires exactly **5 dev agents + 5 review agents**. All agents are **serial** (one at a time, foreground only).
+There are 4 merged tasks (Task A through D). Each task combines multiple original plan tasks. Each task requires exactly **6 rounds** of dev+review. After Round 6, a **7th analysis round** selects the best branch and merges to master. Each round requires exactly **5 dev agents + 5 review agents**. All agents are **serial** (one at a time, foreground only).
 
 ### Merged Task Map
 
 | Task | Original Tasks | Content |
 |------|---------------|---------|
 | Task A | T1+T2 | CLI Skeleton + Models/Config |
-| Task B | T3+T4 | Plugin API + Catalog Refresh |
-| Task C | T5+T6 | Terraform JSON + Runtime Shell |
-| Task D | T7+T8 | Extensions + Dockerfile Matrix |
-| Task E | T9+T10 | Generated Tree + GitHub Actions |
-| Task F | T11+T12 | Thin cdev + Docs |
-| Task G | T13 | Full Validation |
+| Task B | T3+T4+T5+T6 | Plugin API + Catalog Refresh + Terraform JSON + Runtime Shell |
+| Task C | T7+T8+T9+T10 | Extensions + Dockerfile Matrix + Generated Tree + GitHub Actions |
+| Task D | T11+T12+T13 | Thin cdev + Docs + Full Validation |
 
 ### Branch Naming Convention
 
@@ -267,7 +264,7 @@ Examples: `taskA-r1-agent1`, `taskA-r3-review4`
 
 ### Complete Round Execution Checklist
 
-For each task (A through G), for each round (1 through 5):
+For each task (A through D), for each round (1 through 6):
 
 #### Phase 0: Setup
 - [ ] `git checkout master`
@@ -300,10 +297,10 @@ For each task (A through G), for each round (1 through 5):
 - [ ] Compile all 5 reviews into a single synthesis document
 - [ ] Identify best patterns and problems to avoid
 - [ ] Save to memory (this feeds into next round's dev agent prompts)
-- [ ] If this is Round 5: proceed to Final Merge
+- [ ] If this is Round 6: proceed to Final Merge
 - [ ] Otherwise: increment R, go to Phase 0
 
-#### Final Merge (Round 5 only)
+#### Final Merge (Round 6 only)
 - [ ] Run 5 analysis agents (one per branch)
 - [ ] Select BEST branch
 - [ ] `git checkout master && git merge task{A}-r5-agent{X} --no-edit`
@@ -415,11 +412,51 @@ Use the Read tool to read these 3 files in full:
 Do NOT skip any file. Do NOT skim. Read all three completely.
 You MUST finish reading all 3 files before writing any code.
 
+## Data Integrity Rules (NON-NEGOTIABLE)
+
+Every value in your code MUST be:
+1. Dynamically discovered from an external source (API, filesystem, environment variable)
+2. Sourced from TOML configuration files
+3. Derived from a real algorithm on real inputs
+4. Marked with `# TODO:` explaining what real source, why blocked, when implemented
+
+FORBIDDEN: empty lists `[]` for undiscovered versions, `"auto"` strings, `"resolved-*"` placeholders, fake SHA256 hashes, hardcoded stale version numbers, made-up dates.
+
+If you write `[]` where real data belongs, the review will FAIL. If you write `"auto"` as a version, the review will FAIL.
+
 ## Context
 [Round {R} feedback synthesis goes here. For Round 1: "This is Round 1. No prior round feedback exists. Read the docs carefully and implement from scratch with your best engineering judgment."]
 
 ## Task Specification
 [Exact spec from the plan: which files to create/modify, API signatures, TOML config content, test code. Include relevant portions VERBATIM from the plan — do not summarize.]
+
+## TDD-First Workflow (MANDATORY — deviations are CRITICAL failures)
+
+You MUST follow this exact sequence. Do NOT skip phases or reorder steps.
+
+### Phase 1: Framework Tests (write FIRST)
+- Read the plan's test sections for your task
+- Write architectural framework tests that define WHAT must exist (modules, function names, signatures, input/output contracts)
+- These tests should test the overall flow and structure, not implementation details
+- Run: `uv run pytest tests/test_*.py -q` — they MUST FAIL (proving code doesn't exist yet)
+- If tests pass before writing code, you wrote the wrong tests
+
+### Phase 2: Minimal Implementation
+- Write ONLY enough code to make the Phase 1 framework tests pass
+- Do NOT add helper functions beyond what tests require
+- Do NOT write detailed unit tests yet
+- Run: `uv run pytest tests/ -q` — framework tests must now PASS
+
+### Phase 3: Detailed Tests
+- Now write thorough tests covering: data integrity (every field), error paths, edge cases, idempotency, cross-file consistency
+- Never test against placeholder data — use real fixture data that mirrors real API responses
+- Run: `uv run pytest tests/ -q` — some detailed tests should FAIL
+
+### Phase 4: Refine
+- Fix implementation to make all tests pass
+- Fix bugs, do NOT weaken tests to match buggy code
+- If a test assertion is wrong, fix the test — but document WHY the previous assertion was wrong
+- Final run: ALL tests pass, lint clean, format clean
 
 ## Git Safety Reminder
 - NEVER update git config
@@ -433,16 +470,21 @@ You MUST finish reading all 3 files before writing any code.
 2. `git log --oneline -10`
 3. [Read the 3 mandatory files using Read tool]
 4. [Read existing source files on the branch using Read tool]
-5. [Write implementation using Write/Edit tools]
-6. `uv sync`
-7. `uv run pytest tests/test_foo.py -q` (all must pass)
-8. `uv run ruff check codervps tests` (must be clean)
-9. `uv run ruff format --check codervps tests` (must pass)
-10. `git status --short` (verify only intended files changed)
-11. `git add <specific-file-1> <specific-file-2> ...` (stage ONLY changed files by name)
-12. `git commit -m "feat: <description>"` (with Co-Authored-By footer)
-13. `git log --oneline -5` (verify your commit is the latest)
-14. `git status --short` (MUST be clean — no uncommitted changes)
+5. [Phase 1: Write framework tests using Write/Edit tools]
+6. `uv run pytest tests/test_foo.py -q` (MUST FAIL)
+7. [Phase 2: Write minimal implementation]
+8. `uv run pytest tests/ -q` (framework tests MUST PASS)
+9. [Phase 3: Write detailed tests]
+10. `uv run pytest tests/ -q` (detailed tests may fail)
+11. [Phase 4: Refine — fix bugs, never weaken tests]
+12. `uv run pytest tests/ -q` (ALL must pass)
+13. `uv run ruff check codervps tests` (must be clean)
+14. `uv run ruff format --check codervps tests` (must pass)
+15. `git status --short` (verify only intended files changed)
+16. `git add <specific-file-1> <specific-file-2> ...` (stage ONLY changed files by name)
+17. `git commit -m "feat: <description>"` (with Co-Authored-By footer)
+18. `git log --oneline -5` (verify your commit is the latest)
+19. `git status --short` (MUST be clean — no uncommitted changes)
 
 ## After Completion — Required Report
 Report ALL of:
@@ -450,7 +492,10 @@ Report ALL of:
 - Full commit hash: <40-char hash>
 - Files changed (with +additions/-deletions counts):
 - Tests passed: <number>
+- Framework tests written in Phase 1: <count>
+- Detailed tests written in Phase 3: <count>
 - Unique approach: <one sentence>
+- Any `# TODO:` items added: <list or "none">
 
 All paths relative to /home/hp/Projects/OpenSource/CoderVPS.
 ```
@@ -474,6 +519,8 @@ Every review agent MUST embody this persona:
 - "Where is the data supposed to come from, and is it actually coming from there?"
 - "Is this value REAL or is it a PLACEHOLDER?"
 - "Which design requirement is silently dropped here?"
+- "Is this test testing real behavior or just confirming the code exists?"
+- "Did the developer write tests first (TDD) or code first (danger)?"
 
 ---
 
@@ -496,19 +543,43 @@ NEVER chain multiple commands with `&&` or `;`. Each Bash call = exactly ONE com
 
 ## MANDATORY READING (do this FIRST, before any review)
 
-Use the Read tool to read these files in full, in this exact order:
+You MUST read files in this EXACT order. This order is enforced — tests FIRST, then source code. This prevents source-code bias from contaminating your test quality assessment.
+
+### Round 1: Read the 3 spec files (establish ground truth)
 1. /home/hp/Projects/OpenSource/CoderVPS/CLAUDE.md — project instructions, git protocol, constraints
 2. /home/hp/Projects/OpenSource/CoderVPS/docs/superpowers/specs/2026-05-12-codervps-refactor-design.md — full design spec (700+ lines, read EVERY section)
-3. /home/hp/Projects/OpenSource/CoderVPS/docs/superpowers/plans/2026-05-12-codervps-refactor.md — complete implementation plan (read the ENTIRE file, not just the task sections)
+3. /home/hp/Projects/OpenSource/CoderVPS/docs/superpowers/plans/2026-05-12-codervps-refactor.md — complete implementation plan (read the ENTIRE file)
 
-These 3 files define the ground truth. Every line of code on the branch must be traceable to something in these files. If a function, field, config key, or behavior exists in code but not in the spec, it is a DEVIATION. If behavior exists in the spec but not in code, it is a GAP. Both are issues.
+### Round 2: Read ALL test files FIRST (before ANY source code)
+- Read EVERY test file that exists on the branch. Do not skip any.
+- Analyze: What do these tests expect? What behavior do they define? What data flows do they validate?
+- Are the tests testing REAL behavior or just confirming code exists?
+- Are test assertions testing against REAL values or placeholder/mock data?
+
+### Round 3: Read ALL source files LAST (after forming test-based expectations)
+- Read every source file that was created or modified on this branch
+- Compare against the expectations formed from tests
+- Flag any code behavior that exists but is NOT tested
+- Flag any test assertion that validates placeholder/fake data
+
+These 3 rounds of reading define the ground truth. Every line of code on the branch must be traceable to something in these files. If a function, field, config key, or behavior exists in code but not in the spec, it is a DEVIATION. If behavior exists in the spec but not in code, it is a GAP. Both are issues.
 
 ## Review Task
 Review branch `task{A}-r{R}-agent{N}` with maximum adversarial rigor.
 
-## Review Protocol — 15 Mandatory Dimensions
+## Review Protocol — 16 Mandatory Dimensions
 
-You MUST address EVERY one of these 15 dimensions. No dimension may be skipped. For each dimension, produce specific findings with file:line references. A dimension with "nothing found" is acceptable only after deliberate, documented investigation.
+You MUST address EVERY one of these 16 dimensions. No dimension may be skipped. For each dimension, produce specific findings with file:line references. A dimension with "nothing found" is acceptable only after deliberate, documented investigation.
+
+### DIMENSION 0: TDD Discipline (NEW — review this FIRST)
+Before reviewing code, determine if the agent followed TDD:
+- Check the commit diff: were test files created/modified BEFORE source files? (Look at file creation timestamps in the commit, or analyze the diff order)
+- Read ALL test files first (before any source code). Do the tests define clear expected behavior?
+- Then read source files. Does the code exist BECAUSE tests demanded it, or does it look like code was written first and tests added after?
+- Are there tests that pass trivially (e.g., `assert True`, `assert "foo" in out` without verifying structure)?
+- Are there tests that were clearly weakened to match buggy code (e.g., asserting `== []` when spec says versions must be populated)?
+- Do tests exist for error paths and edge cases, or only happy paths?
+- VERDICT: TDD_COMPLIANT / TDD_SUSPECT / TDD_VIOLATION — with specific evidence
 
 ### DIMENSION 1: Complete File Inventory
 Run `git diff master..task{A}-r{R}-agent{N} --stat`. List EVERY file created, modified, or deleted. For each file:
@@ -518,7 +589,23 @@ Run `git diff master..task{A}-r{R}-agent{N} --stat`. List EVERY file created, mo
 - What files are MISSING that the plan requires?
 - Are there untracked files that should have been committed?
 
-### DIMENSION 2: Data Flow — Upstream Sources to Downstream Consumers
+### DIMENSION 2: Placeholder & Dead Code Audit (NEW — review this second, after TDD)
+Scan EVERY source file line by line for:
+- **Empty collections**: `[]`, `{}`, `set()` where real data should exist
+- **Magic strings**: `"auto"`, `"resolved-*"`, `"placeholder"`, `"TBD"`, bare `"TODO"` without colon+explanation
+- **Hardcoded versions**: specific version strings like `"3.13"`, `"1.24.9"`, `"19"` that should come from discovery
+- **Fake hashes/checksums**: hex strings that aren't real SHA256 values: `"sha-go-1263"`, `"resolved-sccache-release-sha256"`
+- **Made-up dates**: hardcoded dates like `20260511` that should be dynamically generated
+- **Dead code**: unused imports, functions that are never called, constants that are never referenced (excluding tests), regex patterns that are compiled but never used, parameters that are accepted but never consumed
+- **Duplicated constants**: same value defined independently in multiple files
+
+For EACH finding, classify as:
+- PLACEHOLDER: value should be real but isn't — CRITICAL if no `# TODO:` with explanation
+- DEAD_CODE: exists but never used — IMPORTANT (must be removed)
+- DUPLICATE: same value in multiple places — IMPORTANT (single source of truth needed)
+- HARDCODED_STALE: real value now but will become wrong — IMPORTANT (needs discovery or `# TODO:`)
+
+### DIMENSION 3: Data Flow — Upstream Sources to Downstream Consumers
 For EVERY data object (catalog entries, config values, CLI arguments, TOML sections, JSON fields, build args):
 - Where does the data originate? (config file? hardcoded? discovery? user input?)
 - Is the origin correct per the design spec? Or is it a placeholder/stub?
@@ -526,18 +613,17 @@ For EVERY data object (catalog entries, config values, CLI arguments, TOML secti
 - Is EVERY intermediate step present? Are any steps missing?
 - Does the data reach ALL its consumers? (template? CLI? workflow? runtime?)
 - Is the data TRANSFORMED correctly at each step? Or are there type mismatches / format errors?
-- If data is empty `[]` or `{}` or `"auto"` — is there a TODO or a concrete plan to populate it?
+- If data is empty `[]` or `{}` or `"auto"` — is there a `# TODO:` with a concrete plan to populate it?
 
-### DIMENSION 3: Completeness — Every Object, Every Field
+### DIMENSION 4: Completeness — Every Object, Every Field
 For EVERY dataclass, function, CLI command, TOML section, and workflow job:
 - Are ALL required fields populated? List every field and its source.
-- Are there placeholders that should be real values? (`"auto"`, `"resolved-*"`, `[]`, `""`)
-- Are there hardcoded values that should come from config or discovery? (dates, tags, versions, URLs)
+- Are there hardcoded values that should come from config or discovery?
 - Does the code handle ALL configured languages (python, rust, go, cpp) equally? Or is one language more complete?
 - Are ALL 9 ActionType values handled? Check the Literal and the executor.
 - Are ALL 4 CLI subcommands fully wired? Or are some still stubs?
 
-### DIMENSION 4: Input/Output Contracts
+### DIMENSION 5: Input/Output Contracts
 For EVERY function:
 - What are its input types? Are they validated? What happens on None/empty/wrong type?
 - What are its output types? Are they always returned? Are there implicit None returns?
@@ -546,7 +632,7 @@ For EVERY function:
 - Does every function that opens a file handle the "file not found" case?
 - Does every function that parses JSON/TOML handle malformed input?
 
-### DIMENSION 5: Error Paths and Edge Cases
+### DIMENSION 6: Error Paths and Edge Cases
 For EVERY operation (file I/O, network call, config parse, data transform, CLI dispatch):
 - What happens when the input is empty? (empty string, empty list, empty dict, empty file)
 - What happens when the input is malformed? (bad JSON, bad TOML, wrong types)
@@ -556,7 +642,7 @@ For EVERY operation (file I/O, network call, config parse, data transform, CLI d
 - Are error messages actionable? Do they tell the user WHAT went wrong and HOW to fix it?
 - Are error exit codes consistent? (0=success, 1=error, 2=usage)
 
-### DIMENSION 6: Logic and Algorithm Correctness
+### DIMENSION 7: Logic and Algorithm Correctness
 For EVERY algorithm (sort, filter, search, parse, extract, build):
 - Does it produce correct output for ALL valid inputs? Test boundary cases mentally.
 - Does it handle the single-element case? The empty case? The maximum case?
@@ -565,7 +651,7 @@ For EVERY algorithm (sort, filter, search, parse, extract, build):
 - Are regular expressions anchored where needed? Do they handle edge cases?
 - Is string parsing robust? (split, strip, replace, format — all have subtle bugs)
 
-### DIMENSION 7: Type Safety and Data Boundaries
+### DIMENSION 8: Type Safety and Data Boundaries
 For EVERY variable, parameter, return value, and dict access:
 - Is the type annotation correct and complete? (no `Any` unless truly dynamic)
 - Are dict accesses guarded with `.get()` or checked with `in`?
@@ -575,7 +661,7 @@ For EVERY variable, parameter, return value, and dict access:
 - Are Optional types handled? What happens on None?
 - Are Literal types enforced? What happens on an unknown value?
 
-### DIMENSION 8: Spec Traceability
+### DIMENSION 9: Spec Traceability
 For EVERY piece of behavior in the code:
 - Which design doc section requires it? Quote the section number or line.
 - Which plan task/step requires it? Quote the task number.
@@ -584,7 +670,7 @@ For EVERY requirement in the spec (scan the plan and design doc):
 - Which code implements it? Give file:line.
 - If you CANNOT find the implementation — flag it as MISSING (a gap).
 
-### DIMENSION 9: Test Quality — Beyond Count
+### DIMENSION 10: Test Quality — Beyond Count
 Do NOT just count tests. Analyze them:
 - Does each test have a clear, specific assertion? Or does it test too many things at once?
 - Does each test verify the CORRECT behavior? Or does it test irrelevant properties?
@@ -593,10 +679,11 @@ Do NOT just count tests. Analyze them:
 - Do tests cover ERROR paths? (Not just happy path — test failures, edge cases, bad inputs)
 - Do tests cover DATA INTEGRITY? (Not just "function returns" — verify every field of the return value)
 - Are test assertions WEAK? (`assert "foo" in out` is weak — prefer `assert out == expected`)
+- Are there tests that pass with placeholder/fake data? (CRITICAL FALSE POSITIVE)
 - Do tests verify ABSENCE? (No .vsix files, no docker socket, no bare --force, no prevent_destroy)
 - List every gap: what SHOULD be tested but ISN'T?
 
-### DIMENSION 10: Design Constraint Compliance
+### DIMENSION 11: Design Constraint Compliance
 Verify EVERY constraint from the design doc's "Critical Constraints" and "Risk Review Addendum":
 - Workspace isolation: all paths under `/workspace/.cdev/`? No `/opt/cde/cache`?
 - Download integrity: SHA256 verified? `.part` atomic rename? Tar path traversal protection?
@@ -607,7 +694,7 @@ Verify EVERY constraint from the design doc's "Critical Constraints" and "Risk R
 - Date tag immutability: workflow checks tag existence before push? `allow_rebuild_date_tag` exists?
 - Concurrency: workflow has concurrency group? cancel-in-progress: false?
 
-### DIMENSION 11: Cross-File Consistency
+### DIMENSION 12: Cross-File Consistency
 Compare EVERY file against EVERY other related file:
 - Do function signatures in `.py` match their imports in other files?
 - Do config keys in `config/*.toml` match the field names in `models.py` and `config.py`?
@@ -618,15 +705,15 @@ Compare EVERY file against EVERY other related file:
 - Do plugin `id` values match the keys in `plugins/__init__.py` `_PLUGIN_TYPES`?
 - Is `__version__` consistent across `__init__.py` and `pyproject.toml`?
 
-### DIMENSION 12: Documentation and Code Clarity
+### DIMENSION 13: Documentation and Code Clarity
 - Does every module have a docstring explaining its purpose?
 - Does every public function have a docstring with parameter and return descriptions?
 - Are complex algorithms commented to explain WHY, not WHAT?
 - Are magic numbers explained? (Why 30? Why "noble"? Why 20260511?)
 - Are workarounds documented with the bug/limitation they work around?
-- Are TODO comments specific? (Not "TODO: fix this" but "TODO: resolve base tag from Docker Hub API")
+- Are `# TODO:` comments specific with what/when/why?
 
-### DIMENSION 13: Production Readiness
+### DIMENSION 14: Production Readiness
 - Can this code run in production RIGHT NOW? If not, what's missing?
 - What happens if the catalog refresh runs against real APIs? Will it work or fail?
 - What happens if GHCR credentials are missing? Clear error or cryptic crash?
@@ -635,7 +722,7 @@ Compare EVERY file against EVERY other related file:
 - Are there any race conditions? (lock file creation, atomic rename, temp file cleanup)
 - Are there any resource leaks? (open file handles, unclosed HTTP connections, temp files)
 
-### DIMENSION 14: Security Review
+### DIMENSION 15: Security Review
 - Are file paths validated before use? (Path traversal? Symlink attacks?)
 - Are URLs validated? (SSRF? Unexpected protocols?)
 - Are shell commands escaped? (Command injection in `subprocess.run`?)
@@ -643,7 +730,7 @@ Compare EVERY file against EVERY other related file:
 - Are file permissions correct? (executable scripts, readable configs)
 - Are archive extractions safe? (Zip bombs? Path traversal in tar?)
 
-### DIMENSION 15: Round-over-Round Improvement Analysis
+### DIMENSION 16: Round-over-Round Improvement Analysis
 If this is Round R >= 2, compare against the previous round:
 - Were the SPECIFIC issues from Round {R-1} review synthesis fixed? Check each one.
 - Did test count increase or decrease? If decreased, WHY?
@@ -653,39 +740,53 @@ If this is Round R >= 2, compare against the previous round:
 
 ## Output Format — Structured Review
 
-After completing all 15 dimensions, output ONE review in this exact structure:
+After completing all 16 dimensions, output ONE review in this exact structure:
 
 ```
 ## STRUCTURED REVIEW — task{A}-r{R}-agent{N}
 
-### CRITICAL ISSUES (must fix before merge — bugs, security, data loss, spec violations)
+### TDD DISCIPLINE ASSESSMENT
+Verdict: TDD_COMPLIANT / TDD_SUSPECT / TDD_VIOLATION
+Evidence: [specific observations about test-first vs code-first order, test quality]
+
+### PLACEHOLDER & DEAD CODE AUDIT
+- PLACEHOLDER: [file:line] — value: <current> — should be: <real source> — fix: <action>
+- DEAD_CODE: [file:line] — item: <what> — never referenced by: <evidence>
+- HARDCODED_STALE: [file:line] — value: <what> — will become wrong because: <reason>
+
+### CRITICAL ISSUES (must fix before merge — bugs, security, data loss, spec violations, placeholder values, TDD violations)
 [file:line] — Description of issue. Why it's critical. How to fix.
 
-### IMPORTANT ISSUES (should fix in next round — missing features, incomplete data, wrong patterns)
+### IMPORTANT ISSUES (should fix in next round — missing features, incomplete data, wrong patterns, dead code, duplicated constants)
 [file:line] — Description. Why it matters. How to fix.
 
 ### MINOR ISSUES (code clarity, style, non-blocking gaps)
 [file:line] — Description.
 
 ### DIMENSION SCORES (1-10)
+0. TDD Discipline: X/10 — [reason]
 1. File Inventory: X/10 — [reason]
-2. Data Flow: X/10 — [reason]
-3. Completeness: X/10 — [reason]
-4. I/O Contracts: X/10 — [reason]
-5. Error Paths: X/10 — [reason]
-6. Logic Correctness: X/10 — [reason]
-7. Type Safety: X/10 — [reason]
-8. Spec Traceability: X/10 — [reason]
-9. Test Quality: X/10 — [reason]
-10. Design Constraints: X/10 — [reason]
-11. Cross-File Consistency: X/10 — [reason]
-12. Documentation: X/10 — [reason]
-13. Production Readiness: X/10 — [reason]
-14. Security: X/10 — [reason]
-15. Round Improvement: X/10 (N/A for R1) — [reason]
+2. Placeholder Audit: X/10 — [reason]
+3. Data Flow: X/10 — [reason]
+4. Completeness: X/10 — [reason]
+5. I/O Contracts: X/10 — [reason]
+6. Error Paths: X/10 — [reason]
+7. Logic Correctness: X/10 — [reason]
+8. Type Safety: X/10 — [reason]
+9. Spec Traceability: X/10 — [reason]
+10. Test Quality: X/10 — [reason]
+11. Design Constraints: X/10 — [reason]
+12. Cross-File Consistency: X/10 — [reason]
+13. Documentation: X/10 — [reason]
+14. Production Readiness: X/10 — [reason]
+15. Security: X/10 — [reason]
+16. Round Improvement: X/10 (N/A for R1) — [reason]
 
 ### DATA FLOW GAPS (specific instances where data is empty, placeholder, or missing its source)
 - [object.field]: expected source → actual source → impact
+
+### TODO AUDIT (every # TODO in the codebase — is it specific? what/when/why?)
+[List every # TODO found, assess completeness of explanation]
 
 ### BEST PATTERNS (specific techniques to adopt — with file:line)
 ### PROBLEMS TO AVOID (specific anti-patterns — with file:line)
@@ -698,7 +799,7 @@ After completing all 15 dimensions, output ONE review in this exact structure:
 After outputting the review:
 1. Save the review to /home/hp/.claude/projects/-home-hp-Projects-OpenSource-CoderVPS/memory/task{A}-r{R}-review{N}.md
 2. `git checkout master`
-3. Report: branch reviewed, verdict, critical count, important count, lowest dimension score
+3. Report: branch reviewed, verdict, critical count, important count, lowest dimension score, TDD verdict
 
 All paths relative to /home/hp/Projects/OpenSource/CoderVPS.
 ```
@@ -731,6 +832,101 @@ Never use `isolation: "worktree"` with `run_in_background: true`. Agents write f
 - **Generated branch atomicity**: `images.json` is written only after all image builds succeed. The `generated` branch is updated with `--force-with-lease`, never plain `--force`. Date tags are immutable — the workflow must fail if a tag already exists in GHCR.
 - **Deletion safety on VPS**: Use `/bin/rm` for file deletion (safe-rm entry point). Never use plain `rm`, `find -delete`, `git clean`, or `docker volume prune` as normal operations.
 - **Terraform `ignore_changes = all`** on persistent volumes, but no `prevent_destroy` — normal Coder workspace deletion must be able to remove volumes.
+
+## Data Integrity Rules (NON-NEGOTIABLE)
+
+### No Placeholders, Magic Numbers, or Fake Data
+
+**Every value in the codebase MUST be one of:**
+1. **Dynamically discovered** from an external source (API, filesystem, environment variable)
+2. **Sourced from TOML configuration** files (`config/toolchains.toml`, `config/extensions.toml`)
+3. **Derived from a real algorithm** operating on real inputs
+4. **Marked with `# TODO:`** with a specific explanation of what real source will provide it and when it will be implemented
+
+**The following are FORBIDDEN in any committed code:**
+- Empty version lists: `[]` for python/rust/cpp versions when go has populated versions
+- Magic strings: `"auto"`, `"resolved-*"`, `"placeholder"`, `"TBD"`, `"TODO"` (without colon+explanation)
+- Hardcoded version numbers that will become stale: `"3.13"`, `"1.24.9"`, `"19"`
+- Hardcoded URLs that silently redirect: `mozilla/sccache` instead of `rust-lang/sccache`
+- Fake SHA256 hashes: `"sha-go-1263"`, `"resolved-sccache-release-sha256"`
+- Made-up dates: `"20260511"` hardcoded instead of dynamically generated
+- Duplicated constants across files: same value defined in multiple places independently
+
+### `# TODO:` Label Requirements
+
+When a value CANNOT be dynamically resolved (e.g., the external API doesn't exist yet, the discovery function is in a future task), it MUST be marked with `# TODO:` followed by:
+- **What** specific real source will provide the value
+- **Why** it cannot be resolved now
+- **When** (which task/phase) it will be implemented
+
+Example — CORRECT:
+```python
+# TODO: resolve base tag from Docker Hub API (codercom/example-base tags endpoint)
+# Blocked by: no Docker Hub registry client implemented yet
+# Will be implemented: Task D (T13 Full Validation)
+base_tag = "ubuntu-noble-20260511"
+```
+
+Example — WRONG (forbidden):
+```python
+version = "auto"  # FORBIDDEN — no explanation of source
+versions = []  # FORBIDDEN — should have discovery function or TODO
+sha256 = "resolved-sccache-release-sha256"  # FORBIDDEN — fake placeholder
+```
+
+### Test Data Must Be Real
+
+- Test fixtures MUST mirror real API response structures with real field names, real version strings, real SHA256 hashes
+- Tests MUST NOT test against fake/placeholder data and pass — a test that asserts `version == "auto"` is a FALSE POSITIVE
+- If real data cannot be obtained, the test MUST be marked with `# TODO:` explaining why and fail/skip appropriately
+
+### Dead Code Elimination
+
+- No unused imports, functions, constants, regex patterns, or parameters
+- If a function exists, it MUST be called by something traceable to a user-facing feature
+- If a constant is defined, it MUST be referenced by executable code (not just tests)
+- Review agents MUST flag all dead code as CRITICAL issues
+
+## TDD-First Development Workflow (MANDATORY for Dev Agents)
+
+Every dev agent MUST follow this sequence. Deviating from this order is a CRITICAL failure.
+
+### Phase 1: Framework Tests (write FIRST, before any implementation code)
+
+Write tests that anchor the overall flow and structure:
+- What modules/functions must exist
+- What their signatures must be
+- What the input/output contracts are
+- What the data flow looks like end-to-end
+
+These are NOT detailed unit tests. They are architectural scaffolding tests that define the shape of the solution. They should FAIL because no implementation exists yet.
+
+Run them to confirm they fail with `ModuleNotFoundError` or `ImportError` — proving the code doesn't exist yet.
+
+### Phase 2: Implementation (write MINIMAL code to pass Phase 1 tests)
+
+Implement only enough to make the framework tests pass. Do NOT add features beyond what the tests require. Do NOT add helper functions that aren't needed yet. Do NOT write detailed unit tests yet.
+
+### Phase 3: Detailed Tests (write AFTER Phase 2 implementation passes)
+
+Now write thorough tests covering:
+- Data integrity: every field of every return value verified
+- Error paths: empty inputs, missing files, malformed data, network failures
+- Edge cases: empty catalogs, single-element lists, maximum values
+- Idempotency: two calls produce identical output for deterministic operations
+- Cross-file consistency: Dockerfile ARGs match build_matrix keys, etc.
+
+### Phase 4: Refine (fix issues found by Phase 3 tests)
+
+Fix the implementation to pass detailed tests. No new features — only fixes.
+
+### Anti-Patterns That Cause Failure
+
+The following are CRITICAL failures:
+1. **Writing implementation code first, then tests** — the tests will be biased toward the implementation and won't catch design flaws
+2. **Fitting tests to code** — changing test assertions to match buggy output instead of fixing the bug
+3. **Tests that only verify mocks are called** — must test real behavior, not mock interactions
+4. **Tests that pass with placeholder data** — if `version == "auto"` passes, the test is broken
 
 ## Refactor Workflow
 
@@ -851,11 +1047,13 @@ Every agent prompt MUST include ALL of these sections. No section may be omitted
 2. **CRITICAL FIRST STEP** — the exact `git checkout` command
 3. **Bash Execution Rule** — one command per Bash call
 4. **MANDATORY READING** — the three files that MUST be read first
-5. **Context** — round feedback synthesis from previous rounds (Round 1 only: "This is Round 1. No prior round feedback exists. Read the docs carefully and implement from scratch.")
-6. **Required Spec** — exact task specification with file lists, API signatures, test requirements
-7. **Git Safety Reminder** — condensed git rules (no config, no destructive, new commits only, specific files only)
-8. **Verification Checklist** — exact sequence of commands the agent must run
-9. **Output Requirements** — what the agent must report when done
+5. **Data Integrity Rules** — no placeholders, magic numbers, fake data; `# TODO:` requirements
+6. **Context** — round feedback synthesis from previous rounds
+7. **Required Spec** — exact task specification with file lists, API signatures, test requirements
+8. **TDD-First Workflow** — Phase 1 (framework tests) → Phase 2 (minimal impl) → Phase 3 (detailed tests) → Phase 4 (refine)
+9. **Git Safety Reminder** — condensed git rules
+10. **Verification Checklist** — exact sequence of commands including TDD phases
+11. **Output Requirements** — what the agent must report when done
 
 ### Prompt Size and Detail
 
@@ -890,7 +1088,7 @@ Approach: <one sentence describing unique approach>
 Issues: <any problems, or "none">
 ```
 
-This audit trail MUST be complete for all 50 agents per task (5 rounds × 10 agents). It provides:
+This audit trail MUST be complete for all 70 agents per task (6 rounds × 10 agents + Round 7 analysis). It provides:
 - Full traceability: which commit came from which agent
 - Reproducibility: what each agent did differently
 - Debugging: if master breaks after Round 5 merge, we can trace back to the source branch
