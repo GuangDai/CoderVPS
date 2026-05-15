@@ -186,11 +186,11 @@ Workflow:
 
 ### Between Rounds (Feedback Synthesis)
 
-After ALL 5 dev agents AND ALL 5 review agents complete a round:
+After ALL 3 dev agents AND ALL 3 review agents complete a round:
 
-1. Synthesize all 5 reviews into one document
-2. Identify the BEST patterns across all 5 branches
-3. Identify the PROBLEMS to avoid across all 5 branches
+1. Synthesize all 3 reviews into one document
+2. Identify the BEST patterns across all 3 branches
+3. Identify the PROBLEMS to avoid across all 3 branches
 4. Save this synthesis to memory
 5. The NEXT round's dev agents receive the synthesis in their prompts
 
@@ -198,7 +198,7 @@ After ALL 5 dev agents AND ALL 5 review agents complete a round:
 
 After Round 6's review phase completes:
 
-1. Run 5 analysis agents — one per branch: `git checkout task{N}-r6-agent{A} && read files && output structured evaluation`
+1. Run 3 analysis agents — one per branch: `git checkout task{N}-r6-agent{A} && read files && output structured evaluation`
 2. Select the single BEST branch based on: test count, code quality, spec compliance, review consensus
 3. Announce which branch was selected and why
 4. Merge to master:
@@ -242,7 +242,7 @@ git branch | grep "task{N}-" | while read branch; do git branch -D "$branch"; do
 
 ### Task Structure
 
-There are 4 merged tasks (Task A through D). Each task combines multiple original plan tasks. Each task requires exactly **6 rounds** of dev+review. After Round 6, a **7th analysis round** selects the best branch and merges to master. Each round requires exactly **5 dev agents + 5 review agents**. All agents are **serial** (one at a time, foreground only).
+There are 4 merged tasks (Task A through D). Each task combines multiple original plan tasks. Each task requires exactly **6 rounds** of dev+review. After Round 6, a **7th analysis round** selects the best branch and merges to master. Each round requires exactly **3 dev agents + 3 review agents**. All agents are **serial** (one at a time, foreground only).
 
 ### Merged Task Map
 
@@ -256,8 +256,8 @@ There are 4 merged tasks (Task A through D). Each task combines multiple origina
 ### Branch Naming Convention
 
 ```
-task{A}-r{R}-agent{N}     # Dev agents: N=1..5
-task{A}-r{R}-review{N}    # Review agents: N=1..5
+task{A}-r{R}-agent{N}     # Dev agents: N=1..3
+task{A}-r{R}-review{N}    # Review agents: N=1..3
 ```
 
 Examples: `taskA-r1-agent1`, `taskA-r3-review4`
@@ -269,10 +269,10 @@ For each task (A through D), for each round (1 through 6):
 #### Phase 0: Setup
 - [ ] `git checkout master`
 - [ ] `git status --short` (must be clean)
-- [ ] Create 5 branches: `git branch task{A}-r{R}-agent{1..5} master`
-- [ ] Verify branches: `git log --oneline -10task{A}-r{R}-agent{1..5}`
+- [ ] Create 3 branches: `git branch task{A}-r{R}-agent{1..3} master`
+- [ ] Verify branches: `git log --oneline -10task{A}-r{R}-agent{1..3}`
 
-#### Phase A: Dev Agents (1→2→3→4→5, serial, foreground)
+#### Phase A: Dev Agents (1→2→3, serial, foreground)
 - [ ] Launch Agent 1: prompt includes `git checkout task{A}-r{R}-agent1`, task spec, round feedback
 - [ ] Wait for completion. Verify: `git log task{A}-r{R}-agent1 --oneline -2`
 - [ ] `git checkout master`
@@ -281,16 +281,18 @@ For each task (A through D), for each round (1 through 6):
 - [ ] Wait for completion. Verify: `git log task{A}-r{R}-agent2 --oneline -2`
 - [ ] `git checkout master`
 - [ ] Save agent result to memory
-- [ ] Launch Agent 3: ... (repeat through Agent 5)
+- [ ] Launch Agent 3: prompt includes `git checkout task{A}-r{R}-agent3`, task spec, round feedback
+- [ ] Wait for completion. Verify: `git log task{A}-r{R}-agent3 --oneline -2`
 - [ ] `git checkout master`
+- [ ] Save agent result to memory
 
-#### Phase B: Review Agents (1→2→3→4→5, serial, foreground)
+#### Phase B: Review Agents (1→2→3, serial, foreground)
 - [ ] Launch Review Agent 1: prompt includes `git checkout task{A}-r{R}-agent1`, review criteria
 - [ ] Wait for completion. Save review to memory.
 - [ ] `git checkout master`
 - [ ] Launch Review Agent 2: prompt includes `git checkout task{A}-r{R}-agent2`, review criteria
 - [ ] Wait for completion. Save review to memory.
-- [ ] ... (repeat through Review Agent 5)
+- [ ] Launch Review Agent 3: prompt includes `git checkout task{A}-r{R}-agent3`, review criteria
 - [ ] `git checkout master`
 
 #### Phase C: Synthesis
@@ -394,7 +396,7 @@ Before launching each new round's dev agents, the coordinating agent MUST:
 Every dev agent prompt MUST follow this template. Copy it VERBATIM, filling in only the bracketed placeholders. Do not omit any section.
 
 ```
-You are Dev Agent {N} of 5 for Task {A} Round {R}.
+You are Dev Agent {N} of 3 for Task {A} Round {R}.
 
 ## CRITICAL FIRST STEP
 Run `git checkout task{A}-r{R}-agent{N}` before doing anything else.
@@ -529,7 +531,7 @@ Every review agent MUST embody this persona:
 Every review agent prompt MUST follow this template. Copy it VERBATIM, filling in only the bracketed placeholders.
 
 ```
-You are Review Agent {N} of 5 for Task {A} Round {R}.
+You are Review Agent {N} of 3 for Task {A} Round {R}.
 
 ## Your Identity
 
@@ -1088,7 +1090,7 @@ Approach: <one sentence describing unique approach>
 Issues: <any problems, or "none">
 ```
 
-This audit trail MUST be complete for all 70 agents per task (6 rounds × 10 agents + Round 7 analysis). It provides:
+This audit trail MUST be complete for all 42 agents per task (6 rounds × 6 agents + Round 7 analysis). It provides:
 - Full traceability: which commit came from which agent
 - Reproducibility: what each agent did differently
 - Debugging: if master breaks after Round 5 merge, we can trace back to the source branch
