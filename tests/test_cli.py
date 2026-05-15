@@ -1,6 +1,13 @@
-"""Tests for codervps.cli -- CLI skeleton, command dispatch, and argument parsing."""
+"""Tests for codervps.cli -- CLI command dispatch and argument parsing.
+
+All CLI commands are now wired to real functions. Tests verify real behavior,
+not stubs.
+"""
 
 from __future__ import annotations
+
+import json
+from pathlib import Path
 
 import pytest
 
@@ -21,7 +28,6 @@ def test_main_no_args_prints_help(capsys):
     rc = main([])
     out = capsys.readouterr().out
     assert rc == 0
-    # RawDescriptionHelpFormatter preserves line breaks
     assert "codervps" in out
 
 
@@ -32,11 +38,10 @@ def test_main_unknown_command_exits_nonzero(capsys):
     with pytest.raises(SystemExit) as exc_info:
         main(["nonexistent"])
     assert exc_info.value.code != 0
-    # argparser error goes to stderr for unknown subparser
     _ = capsys.readouterr()
 
 
-# ---- COMMANDS dict has exactly 4 entries ----
+# ---- COMMANDS dict ----
 
 
 def test_commands_dict_has_four_entries():
@@ -53,39 +58,67 @@ def test_commands_are_callable():
         assert callable(handler), f"{name} handler is not callable"
 
 
-# ---- Validate command ----
+# ---- Validate command (real) ----
 
 
-def test_validate_returns_zero(capsys):
+def test_validate_returns_zero(monkeypatch, tmp_path, capsys):
+    """Real validate checks config files exist and are loadable."""
+    # We need config files to exist for validate to pass
+    monkeypatch.chdir(Path("/home/hp/Projects/OpenSource/CoderVPS"))
     rc = main(["validate"])
     out = capsys.readouterr().out.strip()
     assert rc == 0
-    assert "not implemented" in out
+    assert "OK" in out
 
 
-# ---- Refresh-catalog command stub ----
+# ---- Refresh-catalog command (real) ----
 
 
-def test_refresh_catalog_default_output(tmp_path, monkeypatch, capsys):
-    # Use a temp directory as cwd so build/ is created there
-    monkeypatch.chdir(tmp_path)
-    rc = main(["refresh-catalog"])
-    out = capsys.readouterr().out.strip()
+def test_refresh_catalog_writes_file(monkeypatch, tmp_path, capsys):
+    """Real refresh-catalog writes catalog JSON."""
+    monkeypatch.chdir(Path("/home/hp/Projects/OpenSource/CoderVPS"))
+    out_path = tmp_path / "catalog.json"
+    rc = main(["refresh-catalog", "--output", str(out_path), "--fixture-dir", "tests/fixtures"])
+    capsys.readouterr()
     assert rc == 0
-    assert "not implemented" in out
-    assert (tmp_path / "build").is_dir()
+    assert out_path.exists()
+    data = json.loads(out_path.read_text())
+    assert data["schema_version"] == 1
+    assert "node" in data
 
 
-def test_refresh_catalog_custom_output(tmp_path, capsys):
+def test_refresh_catalog_custom_output(tmp_path, monkeypatch, capsys):
     out_path = tmp_path / "custom" / "catalog.json"
-    rc = main(["refresh-catalog", "--output", str(out_path)])
-    out = capsys.readouterr().out.strip()
+    monkeypatch.chdir(Path("/home/hp/Projects/OpenSource/CoderVPS"))
+    rc = main(["refresh-catalog", "--output", str(out_path), "--fixture-dir", "tests/fixtures"])
     assert rc == 0
-    assert "not implemented" in out
-    assert out_path.parent.is_dir()
+    assert out_path.exists()
 
 
-# ---- Render-generated command stub ----
+# ---- Render-generated command (pastured) ----
+
+
+def test_render_generated_with_catalog(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(Path("/home/hp/Projects/OpenSource/CoderVPS"))
+    # Create a minimal catalog file
+    catalog = tmp_path / "cat.json"
+    catalog.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "base": {"tag": "ubuntu-noble-20260511"},
+                "node": {"majors": {"24": {"version": "24.11.1"}}},
+                "plugins": {"python": {}, "rust": {}, "go": {}, "cpp": {}},
+                "tools": {},
+            }
+        )
+    )
+    out_dir = tmp_path / "gen"
+    rc = main(["render-generated", "--catalog", str(catalog), "--output", str(out_dir)])
+    assert rc == 0
+    # Should have created generated tree
+    assert (out_dir / "generated/catalog/toolchains.json").exists()
+    assert (out_dir / "generated/manifest.json").exists()
 
 
 def test_render_generated_missing_catalog_exits_nonzero(tmp_path):
@@ -94,37 +127,90 @@ def test_render_generated_missing_catalog_exits_nonzero(tmp_path):
     assert exc_info.value.code == 1
 
 
-def test_render_generated_with_catalog(tmp_path, capsys):
-    # Create a minimal catalog file
+def test_render_generated_with_write_images_json(tmp_path, monkeypatch):
+    monkeypatch.chdir(Path("/home/hp/Projects/OpenSource/CoderVPS"))
     catalog = tmp_path / "cat.json"
-    catalog.write_text("{}")
+    images = tmp_path / "imgs.json"
+    catalog.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "plugins": {},
+                "node": {"majors": {}},
+            }
+        )
+    )
+    images.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "images": [{"node_major": 24, "image": "ghcr.io/test:img"}],
+            }
+        )
+    )
     out_dir = tmp_path / "gen"
-    rc = main(["render-generated", "--catalog", str(catalog), "--output", str(out_dir)])
-    out = capsys.readouterr().out.strip()
+    rc = main(
+        [
+            "render-generated",
+            "--catalog",
+            str(catalog),
+            "--output",
+            str(out_dir),
+            "--images",
+            str(images),
+            "--write-images-json",
+        ]
+    )
     assert rc == 0
-    assert "not implemented" in out
-    assert out_dir.is_dir()
+    assert (out_dir / "generated/catalog/images.json").exists()
 
 
-# ---- Build-matrix command stub ----
+def test_render_generated_unrecognized_flag_exits():
+    with pytest.raises(SystemExit) as exc_info:
+        main(["render-generated", "--nonexistent", "foo"])
+    assert exc_info.value.code != 0
 
 
-def test_build_matrix_json_default(tmp_path, capsys):
+# ---- Build-matrix command (pastured) ----
+
+
+def test_build_matrix_json_default(tmp_path, capsys, monkeypatch):
+    monkeypatch.chdir(Path("/home/hp/Projects/OpenSource/CoderVPS"))
     catalog = tmp_path / "cat.json"
-    catalog.write_text("{}")
+    catalog.write_text(
+        json.dumps(
+            {
+                "base": {"tag": "ubuntu-noble-20260511"},
+                "node": {"majors": {"24": {"version": "24.11.1"}}},
+            }
+        )
+    )
     rc = main(["build-matrix", "--catalog", str(catalog)])
     out = capsys.readouterr().out.strip()
     assert rc == 0
-    assert out == "[]"
+    parsed = json.loads(out)
+    assert isinstance(parsed, list)
+    assert parsed[0]["node_major"] == 24
 
 
-def test_build_matrix_github_output(tmp_path, capsys):
+def test_build_matrix_github_output(tmp_path, capsys, monkeypatch):
+    monkeypatch.chdir(Path("/home/hp/Projects/OpenSource/CoderVPS"))
     catalog = tmp_path / "cat.json"
-    catalog.write_text("{}")
+    catalog.write_text(
+        json.dumps(
+            {
+                "base": {"tag": "ubuntu-noble-20260511"},
+                "node": {"majors": {"24": {"version": "24.11.1"}}},
+            }
+        )
+    )
     rc = main(["build-matrix", "--catalog", str(catalog), "--format", "github-output"])
     out = capsys.readouterr().out.strip()
     assert rc == 0
-    assert out == "matrix=[]"
+    assert out.startswith("matrix=")
+    json_str = out.removeprefix("matrix=")
+    parsed = json.loads(json_str)
+    assert isinstance(parsed, list)
 
 
 def test_build_matrix_missing_catalog_exits_nonzero(tmp_path):
@@ -144,7 +230,6 @@ def test_build_parser_returns_argparse():
 
 def test_parser_subcommands_registered():
     p = build_parser()
-    # subparsers action is in _actions
     subs = [a for a in p._actions if a.dest == "command"]
     assert len(subs) == 1
     assert set(subs[0].choices.keys()) == set(COMMANDS.keys())
@@ -159,9 +244,33 @@ def test_parser_help_contains_commands():
     assert "build-matrix" in help_text
 
 
+# ---- All flags registered ----
+
+
+def test_refresh_catalog_has_fixture_dir_flag():
+    p = build_parser()
+    args = p.parse_args(["refresh-catalog", "--fixture-dir", "foo/"])
+    assert args.fixture_dir == "foo/"
+
+
+def test_render_generated_has_images_flag():
+    p = build_parser()
+    args = p.parse_args(["render-generated", "--catalog", "c.json", "--images", "i.json"])
+    assert args.images == "i.json"
+
+
+def test_render_generated_has_write_images_json_flag():
+    p = build_parser()
+    args = p.parse_args(["render-generated", "--catalog", "c.json", "--write-images-json"])
+    assert args.write_images_json is True
+
+
 # ---- Exit code on errors ----
 
 
-def test_main_validate_error_path():
-    # nonexistent subcommand covered by test_main_unknown_command_exits_nonzero
-    pass
+def test_refresh_catalog_bad_config_exits_nonzero(tmp_path, monkeypatch):
+    """If config is missing, refresh-catalog should exit non-zero."""
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as exc_info:
+        main(["refresh-catalog", "--output", str(tmp_path / "out.json")])
+    assert exc_info.value.code == 1

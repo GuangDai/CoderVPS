@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -14,43 +15,128 @@ def _fail(message: str) -> None:
     raise SystemExit(1)
 
 
-# ---- Command handler stubs ----
-# Each returns int (0 for success). Real implementations are wired in later tasks.
+def _load_catalog(catalog_path: str) -> dict:
+    """Load and parse a catalog JSON file, exiting on error."""
+    path = Path(catalog_path)
+    if not path.exists():
+        _fail(f"catalog file not found: {path}")
+    try:
+        return json.loads(path.read_text())
+    except (OSError, ValueError) as exc:
+        _fail(f"failed to read catalog {path}: {exc}")
+
+
+# ---- Real command handlers ----
 
 
 def cmd_validate(args: argparse.Namespace) -> int:
-    print("validate: not implemented yet")
-    return 0
+    """Validate source configuration and generated assets."""
+    try:
+        config_dir = Path("config")
+        if not config_dir.exists():
+            _fail("config directory not found")
+
+        toolchains_path = config_dir / "toolchains.toml"
+        if not toolchains_path.exists():
+            _fail("config/toolchains.toml not found")
+
+        extensions_path = config_dir / "extensions.toml"
+        if not extensions_path.exists():
+            _fail("config/extensions.toml not found")
+
+        from .config import load_extensions_config, load_toolchains_config
+
+        tc_cfg = load_toolchains_config(toolchains_path)
+        if not tc_cfg.enabled_plugins:
+            _fail("no plugins enabled in toolchains config")
+        if not tc_cfg.node_majors:
+            _fail("no Node.js majors configured")
+
+        ext_cfg = load_extensions_config(extensions_path)
+        if not ext_cfg.core_marketplace:
+            _fail("no core extensions configured")
+
+        print("validate: OK")
+        return 0
+    except (OSError, ValueError, KeyError) as exc:
+        _fail(f"validation failed: {exc}")
+        return 1
 
 
 def cmd_refresh_catalog(args: argparse.Namespace) -> int:
-    """Stub: refresh-catalog will be wired in Task 4."""
+    """Refresh toolchain catalog from upstream metadata or fixtures."""
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
-    print(f"refresh-catalog: not implemented yet (would write to {output})")
+
+    fixture_dir = None
+    if args.fixture_dir:
+        fixture_dir = Path(args.fixture_dir)
+
+    from .catalog import refresh_catalog
+    from .config import load_toolchains_config
+
+    try:
+        cfg = load_toolchains_config(Path("config/toolchains.toml"))
+        catalog = refresh_catalog(cfg, fixture_dir=fixture_dir)
+    except (OSError, ValueError, KeyError) as exc:
+        _fail(f"catalog refresh failed: {exc}")
+        return 1
+
+    output.write_text(json.dumps(catalog, indent=2, sort_keys=True) + "\n")
+    print(f"catalog written to {output}", file=sys.stderr)
     return 0
 
 
 def cmd_render_generated(args: argparse.Namespace) -> int:
-    """Stub: render-generated will be wired in Task 9."""
+    """Render the full generated branch tree."""
     output = Path(args.output)
-    catalog = Path(args.catalog)
-    if not catalog.exists():
-        _fail(f"catalog file not found: {catalog}")
-    output.mkdir(parents=True, exist_ok=True)
-    print(f"render-generated: not implemented yet (catalog={catalog}, output={output})")
+    catalog = _load_catalog(args.catalog)
+
+    from .render.generated import render_generated_tree
+
+    try:
+        # Build images dict from --images if provided, else default to empty
+        images = {"schema_version": 1, "images": []}
+        images_path = args.images if getattr(args, "images", None) else None
+        if images_path:
+            raw = json.loads(Path(images_path).read_text())
+            # Accept both dict format {"schema_version": 1, "images": [...]}
+            # and list format [...] (from build-matrix --format json)
+            if isinstance(raw, list):
+                images = {"schema_version": 1, "images": raw}
+            else:
+                images = raw
+
+        write_flag = getattr(args, "write_images_json", False)
+
+        render_generated_tree(
+            output_dir=output,
+            catalog=catalog,
+            images=images,
+            write_images_json=write_flag,
+        )
+    except (OSError, ValueError, KeyError) as exc:
+        _fail(f"render failed: {exc}")
+        return 1
+
+    print(f"generated tree written to {output}", file=sys.stderr)
     return 0
 
 
 def cmd_build_matrix(args: argparse.Namespace) -> int:
-    """Stub: build-matrix will be wired in Task 8."""
-    catalog = Path(args.catalog)
-    if not catalog.exists():
-        _fail(f"catalog file not found: {catalog}")
-    if args.format == "github-output":
-        print("matrix=[]")
-    else:
-        print("[]")
+    """Print the Docker image build matrix."""
+    catalog = _load_catalog(args.catalog)
+
+    from .render.docker import build_matrix, format_matrix_output
+
+    try:
+        image_repo = "ghcr.io/guangdai/codervps-devbox"
+        matrix = build_matrix(catalog, image_repo)
+    except (OSError, ValueError, KeyError) as exc:
+        _fail(f"build matrix failed: {exc}")
+        return 1
+
+    print(format_matrix_output(matrix, fmt=args.format))
     return 0
 
 
@@ -74,28 +160,37 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub = parser.add_subparsers(dest="command", title="commands")
 
-    # Register all commands via the COMMANDS dict
-    for name in COMMANDS:
-        sub.add_parser(name, help=f"{name} (not yet implemented)")
+    # Validate
+    sub.add_parser("validate", help="validate source configuration and generated assets")
 
-    # refresh-catalog takes --output
-    sub.choices["refresh-catalog"].add_argument(
+    # refresh-catalog
+    refresh_parser = sub.add_parser("refresh-catalog", help="refresh toolchain catalog")
+    refresh_parser.add_argument(
         "--output", default="build/toolchains.json", help="output path for toolchain catalog JSON"
     )
-
-    # render-generated takes --catalog and --output
-    sub.choices["render-generated"].add_argument(
-        "--catalog", required=True, help="path to toolchains.json catalog"
+    refresh_parser.add_argument(
+        "--fixture-dir", default=None, help="directory with fixture JSON for testing"
     )
-    sub.choices["render-generated"].add_argument(
+
+    # render-generated
+    render_parser = sub.add_parser("render-generated", help="render the generated branch tree")
+    render_parser.add_argument("--catalog", required=True, help="path to toolchains.json catalog")
+    render_parser.add_argument(
         "--output", default="build/generated", help="output directory for generated tree"
     )
-
-    # build-matrix takes --catalog and --format
-    sub.choices["build-matrix"].add_argument(
-        "--catalog", required=True, help="path to toolchains.json catalog"
+    render_parser.add_argument("--images", default=None, help="path to images.json catalog")
+    render_parser.add_argument(
+        "--write-images-json",
+        action="store_true",
+        dest="write_images_json",
+        default=False,
+        help="write images.json to the generated tree (use in publish job only)",
     )
-    sub.choices["build-matrix"].add_argument(
+
+    # build-matrix
+    matrix_parser = sub.add_parser("build-matrix", help="print Docker image build matrix")
+    matrix_parser.add_argument("--catalog", required=True, help="path to toolchains.json catalog")
+    matrix_parser.add_argument(
         "--format",
         choices=["json", "github-output"],
         default="json",

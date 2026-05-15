@@ -11,7 +11,18 @@ from codervps.render.template import _make_language_options, _make_node_options,
 
 
 def test_make_node_options():
-    options = _make_node_options()
+    catalog = {
+        "node": {
+            "majors": {
+                "24": {"version": "24.11.1"},
+                "22": {"version": "22.21.0"},
+                "20": {"version": "20.19.5"},
+                "18": {"version": "18.20.8"},
+                "16": {"version": "16.20.2"},
+            }
+        }
+    }
+    options = _make_node_options(catalog)
     assert len(options) == 5
     values = [o["value"] for o in options]
     assert values == ["24", "22", "20", "18", "16"]
@@ -118,7 +129,21 @@ def test_template_does_not_mount_host_docker_socket_or_block_destroy():
 
 
 def test_node_major_parameter():
-    doc = render_main_tf_json(images={"images": []}, catalog={"plugins": {}})
+    doc = render_main_tf_json(
+        images={"images": []},
+        catalog={
+            "plugins": {},
+            "node": {
+                "majors": {
+                    "24": {"version": "24.11.1"},
+                    "22": {"version": "22.21.0"},
+                    "20": {"version": "20.19.5"},
+                    "18": {"version": "18.20.8"},
+                    "16": {"version": "16.20.2"},
+                }
+            },
+        },
+    )
     param = doc["data"]["coder_parameter"]["node_major"]
     assert param["name"] == "node_major"
     assert param["display_name"] == "Node.js"
