@@ -414,6 +414,30 @@ Use the Read tool to read these 3 files in full:
 Do NOT skip any file. Do NOT skim. Read all three completely.
 You MUST finish reading all 3 files before writing any code.
 
+## CROSS-AGENT LEARNING (MANDATORY — Round {R} only, R >= 2)
+
+For Round R >= 2, you MUST learn from previous rounds' failures BEFORE writing any code. Read these in order:
+
+### Step A: Read Previous Round Synthesis
+Read `/home/hp/.claude/projects/-home-hp-Projects-OpenSource-CoderVPS/memory/task{A}-r{R-1}-synthesis.md` — the full synthesis of all reviews from the previous round.
+
+### Step B: Read Previous Round Reviews for OTHER agents (NOT agent {N})
+Read ALL review files for agents whose number is NOT {N}:
+- `/home/hp/.claude/projects/-home-hp-Projects-OpenSource-CoderVPS/memory/task{A}-r{R-1}-review{X}.md` for all X ≠ {N}
+- If R >= 3, also read `/home/hp/.claude/projects/-home-hp-Projects-OpenSource-CoderVPS/memory/task{A}-r{R-2}-synthesis.md`
+
+### Step C: Read source code of the BEST-ranked agent from previous round
+- From the synthesis, identify the top-ranked agent
+- Checkout that agent's branch: `git checkout task{A}-r{R-1}-agent{X}` (where X is NOT {N})
+- Read ALL source files that agent created/modified
+- Run `uv run pytest tests/ -q` on that branch to see what tests pass
+- Return to your branch: `git checkout task{A}-r{R}-agent{N}`
+
+This cross-agent learning ensures you:
+- Do NOT repeat the same mistakes other agents made
+- DO adopt the best patterns identified in reviews
+- Build on proven approaches, not start from scratch
+
 ## Data Integrity Rules (NON-NEGOTIABLE)
 
 Every value in your code MUST be:
