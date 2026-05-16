@@ -29,18 +29,33 @@ def _write_json_sorted(path: Path, data: object) -> None:
 
 
 def _copy_runtime_files(dest: Path) -> None:
-    """Copy runtime shell files from source tree to generated tree."""
+    """Copy runtime shell files from source tree to generated tree.
+
+    The Coder template uses ${file("${path.module}/startup.sh")} as the
+    agent startup script, so startup.sh must exist at the template root.
+
+    The rest of runtime/ is copied under templates/devbox/runtime/ and mounted
+    read-only into workspaces at /opt/cde/runtime.
+    """
     src_root = Path("runtime")
     if not src_root.exists():
         return
+
+    template_dir = dest / "templates/devbox"
+    runtime_dir = template_dir / "runtime"
 
     for src_file in src_root.rglob("*"):
         if src_file.is_dir():
             continue
         rel = src_file.relative_to(src_root)
-        dst_file = dest / "templates/devbox/runtime" / rel
+        dst_file = runtime_dir / rel
         dst_file.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src_file, dst_file)
+
+    startup = src_root / "startup.sh"
+    if startup.exists():
+        template_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(startup, template_dir / "startup.sh")
 
 
 def render_generated_tree(

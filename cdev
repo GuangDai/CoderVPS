@@ -17,20 +17,33 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-VERSION="2026-05-15.v10.0"
+VERSION="2026-05-16.v11.0"
 
 ROOT="${CODER_CDE_ROOT:-/opt/coder-cde}"
-DOMAIN="${DOMAIN:-${CODER_DOMAIN:-code.549304.xyz}}"
+ENV_FILE="${ENV_FILE:-$ROOT/.env}"
+
+# Load operator environment if present. This is intentionally local-operator
+# controlled and lets CODER_ACCESS_URL / CODER_SESSION_TOKEN / DOMAIN defaults
+# come from /opt/coder-cde/.env when running cdev from any directory.
+if [[ -f "$ENV_FILE" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
+  set +a
+fi
+
+DOMAIN="${DOMAIN:-${CODER_DOMAIN:-code.example.com}}"
 COMPOSE_FILE="${COMPOSE_FILE:-$ROOT/docker-compose.yml}"
 TEMPLATE_NAME="${TEMPLATE_NAME:-devbox}"
-DEVBOX_IMAGE="${DEVBOX_IMAGE:-coder-devbox:latest}"
-CODER_URL="${CODER_URL:-https://${DOMAIN}}"
+CODER_URL="${CODER_URL:-${CODER_ACCESS_URL:-https://${DOMAIN}}}"
+WILDCARD_URL="${CODER_WILDCARD_ACCESS_URL:-*.${DOMAIN}}"
 BACKUP_ROOT="${CDEV_BACKUP_ROOT:-$ROOT/backups}"
-LOCK_DIR="${CDEV_LOCK_DIR:-/opt/coder-cde/.locks}"
+LOCK_DIR="${CDEV_LOCK_DIR:-$ROOT/.locks}"
 
 log() { printf '\033[1;34m==>\033[0m %s\n' "$*" >&2; }
 warn() { printf '\033[1;33mWARN:\033[0m %s\n' "$*" >&2; }
 err() { printf '\033[1;31mERROR:\033[0m %s\n' "$*" >&2; }
+
 die() {
   err "$*"
   exit 1
@@ -38,6 +51,14 @@ die() {
 
 have() {
   command -v "$1" >/dev/null 2>&1
+}
+
+env_file_status() {
+  if [[ -f "$ENV_FILE" ]]; then
+    printf '%s (found)' "$ENV_FILE"
+  else
+    printf '%s (not found)' "$ENV_FILE"
+  fi
 }
 
 need_root() {
@@ -48,14 +69,31 @@ need_root_dir() {
   [[ -d "$ROOT" ]] || die "ROOT=$ROOT not found. Set CODER_CDE_ROOT=/opt/coder-cde"
 }
 
+need_docker_compose() {
+  have docker || die "docker not found"
+  docker compose version >/dev/null 2>&1 || die "docker compose plugin not available"
+}
+
 need_compose() {
   need_root_dir
+  need_docker_compose
   [[ -f "$COMPOSE_FILE" ]] || die "Docker Compose file not found: $COMPOSE_FILE"
+}
+
+compose_available() {
+  [[ -d "$ROOT" ]] || return 1
+  [[ -f "$COMPOSE_FILE" ]] || return 1
+  have docker || return 1
+  docker compose version >/dev/null 2>&1 || return 1
 }
 
 dc() {
   need_compose
-  docker compose -f "$COMPOSE_FILE" "$@"
+  if [[ -f "$ENV_FILE" ]]; then
+    docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
+  else
+    docker compose -f "$COMPOSE_FILE" "$@"
+  fi
 }
 
 compose_services() {
@@ -71,18 +109,19 @@ coder_service() {
 }
 
 # ---------------------------------------------------------------------------
-# template-dir -- locate the active Coder template directory
+# template-dir helpers
 # ---------------------------------------------------------------------------
+
 template_dir() {
   local d
 
-  if [[ -n "${TEMPLATE_DIR:-}" && -f "$TEMPLATE_DIR/main.tf.json" ]]; then
-    printf '%s\n' "$TEMPLATE_DIR"
-    return
-  fi
-  if [[ -n "${TEMPLATE_DIR:-}" && -f "$TEMPLATE_DIR/main.tf" ]]; then
-    printf '%s\n' "$TEMPLATE_DIR"
-    return
+  if [[ -n "${TEMPLATE_DIR:-}" ]]; then
+    if [[ -f "$TEMPLATE_DIR/main.tf.json" ]] || [[ -f "$TEMPLATE_DIR/main.tf" ]]; then
+      printf '%s\n' "$TEMPLATE_DIR"
+      return 0
+    fi
+    err "TEMPLATE_DIR is set but does not look like a Coder template: $TEMPLATE_DIR"
+    return 1
   fi
 
   for d in \
@@ -92,37 +131,128 @@ template_dir() {
     "$ROOT/devbox"; do
     if [[ -f "$d/main.tf.json" ]] || [[ -f "$d/main.tf" ]]; then
       printf '%s\n' "$d"
-      return
+      return 0
     fi
   done
 
-  d="$(find "$ROOT" -type f \( -name main.tf -o -name main.tf.json \) 2>/dev/null | head -n1 || true)"
-  [[ -n "$d" ]] || die "cannot find template directory. Set TEMPLATE_DIR."
-  dirname "$d"
+  err "cannot find active template directory. Run cdev sync-generated <generated-dir> first or set TEMPLATE_DIR."
+  return 1
+}
+
+target_template_dir() {
+  local d
+
+  if [[ -n "${TEMPLATE_DIR:-}" ]]; then
+    printf '%s\n' "$TEMPLATE_DIR"
+    return 0
+  fi
+
+  d="$(template_dir 2>/dev/null || true)"
+  if [[ -n "$d" ]]; then
+    printf '%s\n' "$d"
+    return 0
+  fi
+
+  printf '%s\n' "$ROOT/templates/$TEMPLATE_NAME"
+}
+
+resolve_template_tree() {
+  local input="${1:-}"
+  local d
+
+  if [[ -z "$input" ]]; then
+    template_dir
+    return $?
+  fi
+
+  if [[ ! -d "$input" ]]; then
+    err "template/generated directory not found: $input"
+    return 1
+  fi
+
+  # Direct template directory.
+  if [[ -f "$input/main.tf.json" ]] || [[ -f "$input/main.tf" ]]; then
+    printf '%s\n' "$input"
+    return 0
+  fi
+
+  # generated branch root or build/generated output.
+  for d in \
+    "$input/templates/$TEMPLATE_NAME" \
+    "$input/templates/devbox"; do
+    if [[ -f "$d/main.tf.json" ]] || [[ -f "$d/main.tf" ]]; then
+      printf '%s\n' "$d"
+      return 0
+    fi
+  done
+
+  err "cannot find template under: $input"
+  err "expected either:"
+  err "  $input/main.tf.json"
+  err "  $input/templates/$TEMPLATE_NAME/main.tf.json"
+  err "  $input/templates/devbox/main.tf.json"
+  return 1
+}
+
+find_images_json() {
+  local input="${1:-}"
+  local td="${2:-}"
+  local p
+
+  for p in \
+    "$input/generated/catalog/images.json" \
+    "$input/catalog/images.json" \
+    "$td/images.json" \
+    "$td/../catalog/images.json" \
+    "$td/../../catalog/images.json" \
+    "$ROOT/generated/catalog/images.json"; do
+    if [[ -n "$p" && -f "$p" ]]; then
+      printf '%s\n' "$p"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+image_exists() {
+  local image="$1"
+  docker buildx imagetools inspect "$image" >/dev/null 2>&1 ||
+    docker manifest inspect "$image" >/dev/null 2>&1
 }
 
 # ---------------------------------------------------------------------------
 # info
 # ---------------------------------------------------------------------------
 cmd_info() {
-  need_root_dir
-
   local td svc
-  td="$(template_dir 2>/dev/null || true)"
-  svc="$(coder_service 2>/dev/null || true)"
 
-  cat <<EOF
+  if [[ -d "$ROOT" ]]; then
+    td="$(template_dir 2>/dev/null || true)"
+  else
+    td=""
+  fi
+
+  if compose_available; then
+    svc="$(coder_service 2>/dev/null || true)"
+  else
+    svc=""
+  fi
+
+  cat <<INFO
 cdev version:        $VERSION
 ROOT:                $ROOT
+ENV_FILE:            $(env_file_status)
 DOMAIN:              $DOMAIN
 COMPOSE_FILE:        $COMPOSE_FILE
 Coder service:       ${svc:-not found}
 CODER_URL:           $CODER_URL
-Wildcard URL:        *.${DOMAIN}
+Wildcard URL:        $WILDCARD_URL
 Template name:       $TEMPLATE_NAME
 Template dir:        ${td:-not found}
+Default target dir:  $(target_template_dir 2>/dev/null || printf '%s' "$ROOT/templates/$TEMPLATE_NAME")
 Lock dir:            $LOCK_DIR
-EOF
+INFO
 }
 
 # ---------------------------------------------------------------------------
@@ -133,23 +263,39 @@ cmd_doctor() {
   echo
 
   log "docker compose services"
-  compose_services || true
+  if compose_available; then
+    compose_services || true
+  else
+    warn "compose is not available yet. Need ROOT, docker compose, and $COMPOSE_FILE"
+  fi
   echo
 
   log "docker compose ps"
-  dc ps || true
+  if compose_available; then
+    dc ps || true
+  else
+    warn "skipping compose ps"
+  fi
   echo
 
   log "template check"
-  cmd_check_generated || true
+  if ! cmd_check_generated; then
+    warn "template check failed or template has not been synced yet"
+  fi
   echo
 
   log "image tags check"
-  cmd_check_images || true
+  if ! cmd_check_images; then
+    warn "image check failed or images.json is not available yet"
+  fi
   echo
 
   log "local coder health"
-  curl -sv http://127.0.0.1:7080/ 2>&1 | tail -80 || true
+  if have curl; then
+    curl -sv http://127.0.0.1:7080/ 2>&1 | tail -80 || true
+  else
+    warn "curl not found"
+  fi
   echo
 
   if have nginx; then
@@ -159,9 +305,15 @@ cmd_doctor() {
 }
 
 # ---------------------------------------------------------------------------
-# ps / logs / restart
+# compose helpers
 # ---------------------------------------------------------------------------
-cmd_ps() { dc ps "$@"; }
+cmd_ps() {
+  dc ps "$@"
+}
+
+cmd_config() {
+  dc config "$@"
+}
 
 cmd_logs() {
   local svc
@@ -196,10 +348,12 @@ cmd_template_dir() {
 # push-template
 # ---------------------------------------------------------------------------
 cmd_push_template() {
-  local td svc rc
-  td="$(template_dir)"
+  local td svc rc tmp remote_dir
 
-  [[ -n "${CODER_SESSION_TOKEN:-}" ]] || die "CODER_SESSION_TOKEN is required.  Run: CODER_SESSION_TOKEN='...' cdev push-template"
+  td="$(template_dir)" || die "no active template directory. Run cdev sync-generated <generated-dir> first."
+  cmd_check_generated "$td" >/dev/null || die "template validation failed; refusing to push"
+
+  [[ -n "${CODER_SESSION_TOKEN:-}" ]] || die "CODER_SESSION_TOKEN is required. Run: CODER_SESSION_TOKEN='...' cdev push-template"
 
   log "push template: name=$TEMPLATE_NAME dir=$td url=$CODER_URL"
 
@@ -209,13 +363,12 @@ cmd_push_template() {
       CODER_URL="$CODER_URL" CODER_SESSION_TOKEN="$CODER_SESSION_TOKEN" \
         coder templates push --yes --directory "$td" "$TEMPLATE_NAME"
     )
-    return
+    return $?
   fi
 
   svc="$(coder_service)"
   log "host coder CLI not found; using Docker Compose service '$svc' as CLI runner"
 
-  local tmp remote_dir
   tmp="$(mktemp -d)"
   remote_dir="/tmp/cdev-template-${TEMPLATE_NAME}-$(date +%s)-$$"
 
@@ -240,35 +393,38 @@ cmd_push_template() {
 
 # ---------------------------------------------------------------------------
 # check-generated -- validate a generated template tree
+# Accepts either:
+#   - active template directory
+#   - generated branch root
+#   - generated/templates/devbox directory
 # ---------------------------------------------------------------------------
 cmd_check_generated() {
-  local td="$1"
-  if [[ -z "$td" ]]; then
-    td="$(template_dir 2>/dev/null || true)"
-  fi
-  [[ -n "$td" ]] || die "no template directory; pass one as argument"
-
+  local input="${1:-}"
+  local td
   local errors=0
 
-  # Must have a main.tf.json or main.tf
+  td="$(resolve_template_tree "$input")" || return 1
+
+  [[ -d "$td" ]] || {
+    err "template directory not found: $td"
+    return 1
+  }
+
   if [[ ! -f "$td/main.tf.json" ]] && [[ ! -f "$td/main.tf" ]]; then
-    err "missing main.tf.json (or main.tf) in $td"
+    err "missing main.tf.json or main.tf in $td"
     errors=$((errors + 1))
   fi
 
-  # Must have startup.sh
   if [[ ! -f "$td/startup.sh" ]]; then
     err "missing startup.sh in $td"
     errors=$((errors + 1))
   fi
 
-  # Must have runtime directory
   if [[ ! -d "$td/runtime" ]]; then
     err "missing runtime/ directory in $td"
     errors=$((errors + 1))
   fi
 
-  # Check for forbidden patterns in main.tf.json
   if [[ -f "$td/main.tf.json" ]]; then
     if grep -q 'prevent_destroy' "$td/main.tf.json" 2>/dev/null; then
       err "main.tf.json contains prevent_destroy (forbidden)"
@@ -281,7 +437,7 @@ cmd_check_generated() {
   fi
 
   if [[ "$errors" -gt 0 ]]; then
-    err "check-generated: $errors error(s) found"
+    err "check-generated: $errors error(s) found in $td"
     return 1
   fi
 
@@ -291,52 +447,65 @@ cmd_check_generated() {
 
 # ---------------------------------------------------------------------------
 # check-images -- verify images referenced in the template exist in GHCR
+# Accepts either generated root or template directory.
 # ---------------------------------------------------------------------------
 cmd_check_images() {
-  local td images_json
-  td="${1:-$(template_dir 2>/dev/null || true)}"
-  [[ -n "$td" ]] || die "no template directory"
+  local input="${1:-}"
+  local td=""
+  local images_json=""
+  local image errors=0
 
-  images_json="$td/images.json"
-  if [[ ! -f "$images_json" ]]; then
-    # Try generated/catalog path
-    local cat_dir
-    for cat_dir in "$td/../catalog" "$td/../../catalog" "$ROOT/generated/catalog"; do
-      if [[ -f "$cat_dir/images.json" ]]; then
-        images_json="$cat_dir/images.json"
-        break
-      fi
-    done
+  if [[ -n "$input" ]]; then
+    td="$(resolve_template_tree "$input" 2>/dev/null || true)"
+  else
+    td="$(template_dir 2>/dev/null || true)"
   fi
 
-  if [[ ! -f "$images_json" ]]; then
+  if ! images_json="$(find_images_json "$input" "$td")"; then
     warn "images.json not found; skipping image check"
     return 0
   fi
 
+  have docker || {
+    warn "docker not found; cannot check image tags"
+    return 1
+  }
+
+  have python3 || {
+    warn "python3 not found; cannot parse $images_json"
+    return 1
+  }
+
   log "checking images from $images_json"
 
-  local image errors=0
-  # Extract image references from the images.json
   while IFS= read -r image; do
-    if [[ -z "$image" ]]; then continue; fi
-    if have docker && docker buildx imagetools inspect "$image" >/dev/null 2>&1; then
+    [[ -n "$image" ]] || continue
+    if image_exists "$image"; then
       log "  found: $image"
     else
       err "  missing: $image"
       errors=$((errors + 1))
     fi
-  done < <(python3 -c "
-import json, sys
-data = json.load(open('$images_json'))
-for img in data.get('images', []):
-    print(img.get('image', ''))
-" 2>/dev/null || true)
+  done < <(
+    IMAGES_JSON="$images_json" python3 - <<'PY'
+import json
+import os
+
+with open(os.environ["IMAGES_JSON"], encoding="utf-8") as f:
+    data = json.load(f)
+
+for img in data.get("images", []):
+    image = img.get("image", "")
+    if image:
+        print(image)
+PY
+  )
 
   if [[ "$errors" -gt 0 ]]; then
     warn "check-images: $errors image(s) not found in registry"
     return 1
   fi
+
   log "check-images: all images present"
   return 0
 }
@@ -346,27 +515,23 @@ for img in data.get('images', []):
 # ---------------------------------------------------------------------------
 cmd_sync_generated() {
   need_root
-  local generated_dir="$1"
 
-  if [[ -z "$generated_dir" ]]; then
-    generated_dir="$ROOT/generated"
-  fi
+  local generated_dir="${1:-$ROOT/generated}"
+  local templates_subdir target_dir staging_dir old_dir
+
   [[ -d "$generated_dir" ]] || die "generated directory not found: $generated_dir"
 
-  local templates_subdir="$generated_dir/templates/$TEMPLATE_NAME"
-  if [[ ! -d "$templates_subdir" ]]; then
-    templates_subdir="$generated_dir/templates/devbox"
-  fi
-  [[ -d "$templates_subdir" ]] || die "template subdirectory not found under $generated_dir"
+  templates_subdir="$(resolve_template_tree "$generated_dir")" ||
+    die "template subdirectory not found under $generated_dir"
 
-  local target_dir staging_dir
-  target_dir="$(template_dir)"
+  target_dir="$(target_template_dir)"
   staging_dir="$(mktemp -d)"
+  old_dir="${target_dir}.prev.$(date +%Y%m%d%H%M%S)"
 
   log "sync-generated: source=$templates_subdir target=$target_dir"
 
-  # Acquire lock and perform atomic switch
   mkdir -p "$LOCK_DIR"
+  mkdir -p "$(dirname "$target_dir")"
 
   (
     exec 9>"$LOCK_DIR/sync-generated.lock"
@@ -374,30 +539,26 @@ cmd_sync_generated() {
       die "another sync-generated is already running"
     fi
 
-    # Copy generated template into staging
     cp -a "$templates_subdir"/. "$staging_dir"/
 
-    # Validate the staging copy
+    if [[ -f "$generated_dir/generated/catalog/images.json" ]]; then
+      cp "$generated_dir/generated/catalog/images.json" "$staging_dir/images.json" 2>/dev/null || true
+    elif [[ -f "$generated_dir/catalog/images.json" ]]; then
+      cp "$generated_dir/catalog/images.json" "$staging_dir/images.json" 2>/dev/null || true
+    fi
+
     if ! cmd_check_generated "$staging_dir"; then
       err "staging validation failed; aborting sync"
       rm -rf "$staging_dir"
       exit 1
     fi
 
-    # Also validate image references if images.json exists
-    if [[ -f "$generated_dir/catalog/images.json" ]]; then
-      cp "$generated_dir/catalog/images.json" "$staging_dir/images.json" 2>/dev/null || true
-    fi
-
-    # Atomic switch: move old aside, move new in
-    local old_dir="${target_dir}.prev.$(date +%s)"
-    if [[ -d "$target_dir" ]]; then
+    if [[ -e "$target_dir" ]]; then
       mv "$target_dir" "$old_dir"
     fi
 
     mv "$staging_dir" "$target_dir"
 
-    # Clean up old directory
     if [[ -d "$old_dir" ]]; then
       /bin/rm -rf "$old_dir"
     fi
@@ -412,19 +573,26 @@ cmd_sync_generated() {
 cmd_list_workspace_volumes() {
   log "listing Docker volumes with Coder workspace labels"
 
+  have docker || die "docker not found"
+
   docker volume ls --format '{{.Name}}' 2>/dev/null | while read -r vol; do
     local labels
     labels="$(docker volume inspect "$vol" --format '{{json .Labels}}' 2>/dev/null || true)"
     if [[ -n "$labels" && "$labels" != "null" ]] && echo "$labels" | grep -q 'coder.workspace_id'; then
       local ws_id owner
-      ws_id="$(echo "$labels" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('coder.workspace_id','?'))" 2>/dev/null || echo '?')"
-      owner="$(echo "$labels" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('coder.owner','?'))" 2>/dev/null || echo '?')"
+      if have python3; then
+        ws_id="$(echo "$labels" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('coder.workspace_id','?'))" 2>/dev/null || echo '?')"
+        owner="$(echo "$labels" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('coder.owner','?'))" 2>/dev/null || echo '?')"
+      else
+        ws_id="?"
+        owner="?"
+      fi
       printf '  %-50s  ws=%-36s  owner=%s\n' "$vol" "$ws_id" "$owner"
     fi
   done
 
   echo
-  warn "Volumes above are managed by Coder.  Do NOT delete them manually."
+  warn "Volumes above are managed by Coder. Do NOT delete them manually."
   warn "Normal Coder workspace deletion removes the volume automatically."
 }
 
@@ -447,26 +615,31 @@ cdev - thin VPS helper for CoderVPS
   cdev info                        show configuration summary
   cdev doctor                      full health check
   cdev ps                          show Docker Compose services
+  cdev config                      render Docker Compose config
   cdev logs [service]              tail logs (default: coder service)
   cdev restart [service]           restart services
 
   cdev template-dir                print active template directory path
   cdev push-template               push template to Coder (requires CODER_SESSION_TOKEN)
 
-  cdev sync-generated <dir>        atomically sync generated template tree to active dir
-  cdev check-generated [dir]       validate a generated template tree
+  cdev sync-generated [dir]        atomically sync generated tree to active template dir
+  cdev check-generated [dir]       validate active/generated/template tree
   cdev check-images [dir]          verify template images exist in GHCR
 
   cdev list-workspace-volumes      list Coder-managed workspace volumes (never deletes)
   cdev install-self                install cdev to /usr/local/bin
 
 Environment:
-  DOMAIN=code.549304.xyz
   CODER_CDE_ROOT=/opt/coder-cde
+  ENV_FILE=/opt/coder-cde/.env
+  COMPOSE_FILE=/opt/coder-cde/docker-compose.yml
+  DOMAIN=code.example.com
+  CODER_ACCESS_URL=https://code.example.com
+  CODER_WILDCARD_ACCESS_URL=*.code.example.com
   TEMPLATE_DIR=/opt/coder-cde/templates/devbox
   TEMPLATE_NAME=devbox
   CODER_SESSION_TOKEN=...
-  CODER_URL=https://code.549304.xyz
+  TAIL=200
 HELP
 }
 
@@ -480,10 +653,12 @@ main() {
   case "$cmd" in
   help | -h | --help) usage ;;
   version | --version) echo "$VERSION" ;;
+
   info) cmd_info "$@" ;;
   doctor) cmd_doctor "$@" ;;
 
   ps) cmd_ps "$@" ;;
+  config) cmd_config "$@" ;;
   logs) cmd_logs "$@" ;;
   restart) cmd_restart "$@" ;;
 

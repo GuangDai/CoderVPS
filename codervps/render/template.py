@@ -295,6 +295,11 @@ def render_main_tf_json(images: dict, catalog: dict) -> dict:
                             "read_only": False,
                         },
                         {
+                            "host_path": "/opt/coder-cde/templates/devbox/runtime",
+                            "container_path": "/opt/cde/runtime",
+                            "read_only": True,
+                        },
+                        {
                             "host_path": "/opt/coder-cde/extensions",
                             "container_path": "/opt/cde/extensions",
                             "read_only": True,
