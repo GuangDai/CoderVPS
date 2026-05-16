@@ -1,0 +1,70 @@
+{
+  "images": [
+    {
+      "base_image": "codercom/example-base:ubuntu-noble-20260512",
+      "code_server_version": "4.118.0",
+      "image": "ghcr.io/guangdai/codervps-devbox:noble-20260512-node24",
+      "llvm_version": "22",
+      "node_major": 24,
+      "node_version": "24.15.0",
+      "sccache_asset": "sccache-v0.15.0-x86_64-unknown-linux-musl.tar.gz",
+      "sccache_sha256": "782d2b5dd7ae0a55ebe368ab258114d0928d019ac2d949ab85d5d02f3926709e",
+      "sccache_version": "0.15.0",
+      "tag": "noble-20260512-node24",
+      "uv_version": "0.11.14"
+    },
+    {
+      "base_image": "codercom/example-base:ubuntu-noble-20260512",
+      "code_server_version": "4.118.0",
+      "image": "ghcr.io/guangdai/codervps-devbox:noble-20260512-node22",
+      "llvm_version": "22",
+      "node_major": 22,
+      "node_version": "22.22.3",
+      "sccache_asset": "sccache-v0.15.0-x86_64-unknown-linux-musl.tar.gz",
+      "sccache_sha256": "782d2b5dd7ae0a55ebe368ab258114d0928d019ac2d949ab85d5d02f3926709e",
+      "sccache_version": "0.15.0",
+      "tag": "noble-20260512-node22",
+      "uv_version": "0.11.14"
+    },
+    {
+      "base_image": "codercom/example-base:ubuntu-noble-20260512",
+      "code_server_version": "4.118.0",
+      "image": "ghcr.io/guangdai/codervps-devbox:noble-20260512-node20",
+      "llvm_version": "22",
+      "node_major": 20,
+      "node_version": "20.20.2",
+      "sccache_asset": "sccache-v0.15.0-x86_64-unknown-linux-musl.tar.gz",
+      "sccache_sha256": "782d2b5dd7ae0a55ebe368ab258114d0928d019ac2d949ab85d5d02f3926709e",
+      "sccache_version": "0.15.0",
+      "tag": "noble-20260512-node20",
+      "uv_version": "0.11.14"
+    },
+    {
+      "base_image": "codercom/example-base:ubuntu-noble-20260512",
+      "code_server_version": "4.118.0",
+      "image": "ghcr.io/guangdai/codervps-devbox:noble-20260512-node18",
+      "llvm_version": "22",
+      "node_major": 18,
+      "node_version": "18.20.8",
+      "sccache_asset": "sccache-v0.15.0-x86_64-unknown-linux-musl.tar.gz",
+      "sccache_sha256": "782d2b5dd7ae0a55ebe368ab258114d0928d019ac2d949ab85d5d02f3926709e",
+      "sccache_version": "0.15.0",
+      "tag": "noble-20260512-node18",
+      "uv_version": "0.11.14"
+    },
+    {
+      "base_image": "codercom/example-base:ubuntu-noble-20260512",
+      "code_server_version": "4.118.0",
+      "image": "ghcr.io/guangdai/codervps-devbox:noble-20260512-node16",
+      "llvm_version": "22",
+      "node_major": 16,
+      "node_version": "16.20.2",
+      "sccache_asset": "sccache-v0.15.0-x86_64-unknown-linux-musl.tar.gz",
+      "sccache_sha256": "782d2b5dd7ae0a55ebe368ab258114d0928d019ac2d949ab85d5d02f3926709e",
+      "sccache_version": "0.15.0",
+      "tag": "noble-20260512-node16",
+      "uv_version": "0.11.14"
+    }
+  ],
+  "schema_version": 1
+}

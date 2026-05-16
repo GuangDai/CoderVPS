@@ -1,0 +1,31 @@
+{
+  "coder_base": {
+    "source": "codercom/example-base",
+    "tag": "ubuntu-noble-20260512"
+  },
+  "generated_at": "2026-05-16T07:01:47+00:00",
+  "generator_version": "0.1.0",
+  "image_tags": [
+    "ghcr.io/guangdai/codervps-devbox:noble-20260512-node24",
+    "ghcr.io/guangdai/codervps-devbox:noble-20260512-node22",
+    "ghcr.io/guangdai/codervps-devbox:noble-20260512-node20",
+    "ghcr.io/guangdai/codervps-devbox:noble-20260512-node18",
+    "ghcr.io/guangdai/codervps-devbox:noble-20260512-node16"
+  ],
+  "node_versions": {
+    "16": "16.20.2",
+    "18": "18.20.8",
+    "20": "20.20.2",
+    "22": "22.22.3",
+    "24": "24.15.0"
+  },
+  "schema_version": 1,
+  "source_commit": "f9e62314faa21d8588130b94fd66b2330f6e3092",
+  "tool_versions": {
+    "code_server": "4.118.0",
+    "llvm_prebundle": "22",
+    "sccache": "0.15.0",
+    "uv": "0.11.14"
+  },
+  "workflow_run_id": "25955630952"
+}
