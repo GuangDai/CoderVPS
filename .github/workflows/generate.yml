@@ -79,15 +79,19 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Check image tags are new
-        if: ${{ !inputs.allow_rebuild_date_tag }}
+      - name: Check whether image tag already exists
+        id: image
         run: |
           if docker buildx imagetools inspect "${{ matrix.image }}" >/dev/null 2>&1; then
-            echo "::error title=Existing immutable tag::${{ matrix.image }} already exists"
-            exit 1
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Image already exists, build will be skipped: ${{ matrix.image }}"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "Image does not exist yet, build is required: ${{ matrix.image }}"
           fi
 
       - name: Build and push
+        if: ${{ steps.image.outputs.exists != 'true' || inputs.allow_rebuild_date_tag }}
         uses: docker/build-push-action@v6
         with:
           context: .
