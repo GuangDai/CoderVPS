@@ -320,6 +320,7 @@ def _startup_script_hcl() -> str:
     }}
 
     exec > >(tee -a /tmp/codervps-startup-debug.log) 2>&1
+    set -x
 
     export HOME="{HOME_DIR}"
     export CDEV_RUNTIME_ROOT="{CDEV_RUNTIME_ROOT}"
@@ -329,70 +330,105 @@ def _startup_script_hcl() -> str:
     mkdir -p "{PROJECT_DIR}" "$HOME/.config/code-server" "$CDEV_RUNTIME_ROOT"
 
     printf '%s\\n' \\
-      'bind-addr: 0.0.0.0:13337' \\
+      'bind-addr: 127.0.0.1:13337' \\
       'auth: none' \\
       'cert: false' \\
       > "$HOME/.config/code-server/config.yaml"
 
-    if command -v code-server >/dev/null 2>&1; then
+    code_server_health="http://127.0.0.1:13337/healthz"
+    code_server_pid="/tmp/code-server.pid"
+    code_server_log="/tmp/code-server.log"
+
+    if curl -fsS "$code_server_health" >/dev/null 2>&1; then
+      log "code-server already healthy"
+    else
+      if ! command -v code-server >/dev/null 2>&1; then
+        echo "code-server not found in PATH" >&2
+        exit 1
+      fi
+
       log "Starting code-server"
       code-server --version || true
 
-      code_server_pid="/tmp/code-server.pid"
-      code_server_log="/tmp/code-server.log"
-
-      if [ -s "$code_server_pid" ]; then
-        old_pid="$(cat "$code_server_pid" 2>/dev/null || true)"
-        if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
-            kill "$old_pid" 2>/dev/null || true
-            sleep 1
-        fi
-      fi
-
-      rm -f "$code_server_pid"
+      rm -f "$code_server_log"
+      touch "$code_server_log"
 
       if command -v setsid >/dev/null 2>&1; then
-        setsid code-server \
-            --auth none \
-            --disable-telemetry \
-            --disable-update-check \
-            --bind-addr 127.0.0.1:13337 \
-            "/home/coder/workspace" \
-            > "$code_server_log" 2>&1 < /dev/null &
+        setsid code-server \\
+          --auth none \\
+          --disable-telemetry \\
+          --disable-update-check \\
+          --bind-addr 127.0.0.1:13337 \\
+          "{PROJECT_DIR}" \\
+          > "$code_server_log" 2>&1 < /dev/null &
       else
-        nohup code-server \
-            --auth none \
-            --disable-telemetry \
-            --disable-update-check \
-            --bind-addr 127.0.0.1:13337 \
-            "/home/coder/workspace" \
-            > "$code_server_log" 2>&1 < /dev/null &
+        nohup code-server \\
+          --auth none \\
+          --disable-telemetry \\
+          --disable-update-check \\
+          --bind-addr 127.0.0.1:13337 \\
+          "{PROJECT_DIR}" \\
+          > "$code_server_log" 2>&1 < /dev/null &
       fi
 
       echo "$!" > "$code_server_pid"
+      log "code-server pid=$(cat "$code_server_pid" 2>/dev/null || true)"
 
-
-      for _ in $(seq 1 60); do
-        if curl -fsS http://0.0.0.0:13337/healthz >/dev/null 2>&1; then
+      for _ in $(seq 1 120); do
+        if curl -fsS "$code_server_health" >/dev/null 2>&1; then
           log "code-server is healthy"
           break
         fi
+
+        if [ -s "$code_server_pid" ]; then
+          if ! kill -0 "$(cat "$code_server_pid")" 2>/dev/null; then
+            log "code-server process is not running yet or exited"
+            tail -n 120 "$code_server_log" >&2 || true
+          fi
+        fi
+
         sleep 0.5
       done
-      if ! curl -fsS http://0.0.0.0:13337/healthz >/dev/null 2>&1; then
+
+      if ! curl -fsS "$code_server_health" >/dev/null 2>&1; then
         log "code-server did not become healthy"
-        tail -n 80 /tmp/code-server.log >&2 || true
+        ps aux >&2 || true
+        ss -lntp >&2 || true
+        tail -n 200 "$code_server_log" >&2 || true
         exit 1
       fi
-    else
-      echo "code-server not found in PATH" >&2
-      exit 1
     fi
 
     if [ -f /opt/cde/runtime/startup.sh ]; then
       log "Running CoderVPS runtime startup"
+
+      set +e
       bash /opt/cde/runtime/startup.sh
+      runtime_rc="$?"
+      set -e
+
+      if [ "$runtime_rc" -ne 0 ]; then
+        log "CoderVPS runtime startup failed with rc=$runtime_rc"
+
+        if curl -fsS "$code_server_health" >/dev/null 2>&1; then
+          log "code-server is still healthy, ignoring runtime startup failure"
+          exit 0
+        fi
+
+        log "runtime failed and code-server is not healthy"
+        tail -n 200 "$code_server_log" >&2 || true
+        exit "$runtime_rc"
+      fi
     fi
+
+    if curl -fsS "$code_server_health" >/dev/null 2>&1; then
+      log "startup completed successfully"
+      exit 0
+    fi
+
+    log "startup finished but code-server is not healthy"
+    tail -n 200 "$code_server_log" >&2 || true
+    exit 1
   EOT"""
 
 
