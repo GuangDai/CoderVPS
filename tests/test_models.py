@@ -86,7 +86,7 @@ def _make_minimal_runtime_plan(**overrides) -> RuntimePlan:
     defaults = dict(
         plugin="python",
         actions=[_make_minimal_runtime_action()],
-        env={"PATH": "/workspace/.cdev/bin"},
+        env={"PATH": "/home/coder/.cdev/bin"},
     )
     defaults.update(overrides)
     return RuntimePlan(**defaults)
@@ -325,7 +325,7 @@ def test_runtimeaction_download_type():
         type="download",
         values={
             "url": "https://example.com/file.tar.gz",
-            "dest": "/workspace/.cdev/downloads/file.tar.gz",
+            "dest": "/home/coder/.cdev/downloads/file.tar.gz",
             "sha256": "abc123",
         },
     )
@@ -337,14 +337,14 @@ def test_runtimeaction_extract_tar_type():
     obj = RuntimeAction(
         id="extract",
         type="extract_tar",
-        creates="/workspace/.cdev/toolchains/go/bin/go",
+        creates="/home/coder/.cdev/toolchains/go/bin/go",
         values={
-            "src": "/workspace/.cdev/downloads/go.tar.gz",
-            "dest": "/workspace/.cdev/toolchains/go/1.22",
+            "src": "/home/coder/.cdev/downloads/go.tar.gz",
+            "dest": "/home/coder/.cdev/toolchains/go/1.22",
             "strip_components": 1,
         },
     )
-    assert obj.creates == "/workspace/.cdev/toolchains/go/bin/go"
+    assert obj.creates == "/home/coder/.cdev/toolchains/go/bin/go"
 
 
 def test_runtimeaction_all_action_types():
@@ -379,10 +379,10 @@ def test_runtimeplan_multiple_actions():
         _make_minimal_runtime_action(id="a3", critical=False),
     ]
     obj = RuntimePlan(
-        plugin="go", actions=actions, env={"GOROOT": "/workspace/.cdev/toolchains/go/1.22"}
+        plugin="go", actions=actions, env={"GOROOT": "/home/coder/.cdev/toolchains/go/1.22"}
     )
     assert len(obj.actions) == 3
-    assert obj.env["GOROOT"].startswith("/workspace/.cdev")
+    assert obj.env["GOROOT"].startswith("/home/coder/.cdev")
 
 
 # ---- ParameterSpec ----
@@ -399,7 +399,7 @@ def test_parameterspec_defaults():
         order=1,
     )
     assert obj.options == []
-    assert obj.condition is None
+    assert obj.count is None
 
 
 def test_parameterspec_with_options():
@@ -416,10 +416,10 @@ def test_parameterspec_with_options():
         mutable=False,
         order=2,
         options=options,
-        condition="contains(data.coder_parameter.languages.value, 'python')",
+        count="data.coder_parameter.enable_python.value ? 1 : 0",
     )
     assert len(obj.options) == 2
-    assert obj.condition is not None
+    assert obj.count is not None
 
 
 # ---- Edge cases: equality and repr ----
@@ -453,6 +453,6 @@ def test_runtimeaction_env_passthrough():
         id="with-env",
         type="run",
         command=["uv", "python", "install", "3.13"],
-        env={"UV_CACHE_DIR": "/workspace/.cdev/cache/uv"},
+        env={"UV_CACHE_DIR": "/home/coder/.cdev/cache/uv"},
     )
-    assert obj.env["UV_CACHE_DIR"] == "/workspace/.cdev/cache/uv"
+    assert obj.env["UV_CACHE_DIR"] == "/home/coder/.cdev/cache/uv"

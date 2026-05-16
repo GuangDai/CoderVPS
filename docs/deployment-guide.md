@@ -59,7 +59,7 @@ The generated branch is publishable output, not source code. It should contain:
 generated/catalog/toolchains.json
 generated/catalog/images.json
 generated/manifest.json
-templates/devbox/main.tf.json
+templates/devbox/main.tf
 templates/devbox/runtime/
 templates/devbox/extensions/
 templates/devbox/vsix/
@@ -156,8 +156,9 @@ In the Coder UI:
 
 1. Pick the CoderVPS template.
 2. Pick the Node.js major.
-3. Pick languages.
-4. For Python, choose a runtime such as `CPython 3.13.13`,
+3. Enable the languages you want with the `Enable Python`, `Enable Go`,
+   `Enable Rust`, and `Enable C/C++` checkboxes.
+4. For enabled Python, choose a runtime such as `CPython 3.13.13`,
    `CPython 3.13.13 free-threaded`, `PyPy 3.11.15`, or `GraalPy 3.12.0`.
 5. Pick optional tools.
 6. Create the workspace.
@@ -194,6 +195,6 @@ confirmed the target workspaces were deleted in Coder. Stopped workspaces can
 look unused to Docker while still containing active user data.
 
 If Python runtime installation fails, check the selected value in
-`/workspace/.cdev/selection.json` and the startup logs. Runtime values should
+`/home/coder/.cdev/selection.json` and the startup logs. Runtime values should
 look like `cpython@3.13.13`, `cpython@3.13.13+freethreaded`, `pypy@3.11.15`,
 or `graalpy@3.12.0`.

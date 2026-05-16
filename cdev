@@ -116,7 +116,7 @@ template_dir() {
   local d
 
   if [[ -n "${TEMPLATE_DIR:-}" ]]; then
-    if [[ -f "$TEMPLATE_DIR/main.tf.json" ]] || [[ -f "$TEMPLATE_DIR/main.tf" ]]; then
+    if [[ -f "$TEMPLATE_DIR/main.tf" ]] || [[ -f "$TEMPLATE_DIR/main.tf.json" ]]; then
       printf '%s\n' "$TEMPLATE_DIR"
       return 0
     fi
@@ -129,7 +129,7 @@ template_dir() {
     "$ROOT/templates/devbox" \
     "$ROOT/template/$TEMPLATE_NAME" \
     "$ROOT/devbox"; do
-    if [[ -f "$d/main.tf.json" ]] || [[ -f "$d/main.tf" ]]; then
+    if [[ -f "$d/main.tf" ]] || [[ -f "$d/main.tf.json" ]]; then
       printf '%s\n' "$d"
       return 0
     fi
@@ -171,7 +171,7 @@ resolve_template_tree() {
   fi
 
   # Direct template directory.
-  if [[ -f "$input/main.tf.json" ]] || [[ -f "$input/main.tf" ]]; then
+  if [[ -f "$input/main.tf" ]] || [[ -f "$input/main.tf.json" ]]; then
     printf '%s\n' "$input"
     return 0
   fi
@@ -180,7 +180,7 @@ resolve_template_tree() {
   for d in \
     "$input/templates/$TEMPLATE_NAME" \
     "$input/templates/devbox"; do
-    if [[ -f "$d/main.tf.json" ]] || [[ -f "$d/main.tf" ]]; then
+    if [[ -f "$d/main.tf" ]] || [[ -f "$d/main.tf.json" ]]; then
       printf '%s\n' "$d"
       return 0
     fi
@@ -188,9 +188,9 @@ resolve_template_tree() {
 
   err "cannot find template under: $input"
   err "expected either:"
-  err "  $input/main.tf.json"
-  err "  $input/templates/$TEMPLATE_NAME/main.tf.json"
-  err "  $input/templates/devbox/main.tf.json"
+  err "  $input/main.tf"
+  err "  $input/templates/$TEMPLATE_NAME/main.tf"
+  err "  $input/templates/devbox/main.tf"
   return 1
 }
 
@@ -410,8 +410,13 @@ cmd_check_generated() {
     return 1
   }
 
+  if [[ -f "$td/main.tf" ]] && [[ -f "$td/main.tf.json" ]]; then
+    err "template contains both main.tf and main.tf.json; keep only one"
+    errors=$((errors + 1))
+  fi
+
   if [[ ! -f "$td/main.tf.json" ]] && [[ ! -f "$td/main.tf" ]]; then
-    err "missing main.tf.json or main.tf in $td"
+    err "missing main.tf or main.tf.json in $td"
     errors=$((errors + 1))
   fi
 
@@ -432,6 +437,17 @@ cmd_check_generated() {
     fi
     if grep -q '/var/run/docker.sock' "$td/main.tf.json" 2>/dev/null; then
       err "main.tf.json mounts docker socket (forbidden)"
+      errors=$((errors + 1))
+    fi
+  fi
+
+  if [[ -f "$td/main.tf" ]]; then
+    if grep -q 'prevent_destroy' "$td/main.tf" 2>/dev/null; then
+      err "main.tf contains prevent_destroy (forbidden)"
+      errors=$((errors + 1))
+    fi
+    if grep -q '/var/run/docker.sock' "$td/main.tf" 2>/dev/null; then
+      err "main.tf mounts docker socket (forbidden)"
       errors=$((errors + 1))
     fi
   fi

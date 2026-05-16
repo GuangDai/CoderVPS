@@ -65,7 +65,7 @@ class GoPlugin:
                 default=catalog.defaults.get("version", "1.24.9"),
                 mutable=False,
                 order=30,
-                condition='contains(data.coder_parameter.languages.value, "go")',
+                count="data.coder_parameter.enable_go.value ? 1 : 0",
                 options=catalog.versions,
             ),
             ParameterSpec(
@@ -76,7 +76,7 @@ class GoPlugin:
                 default='["gopls"]',
                 mutable=False,
                 order=31,
-                condition='contains(data.coder_parameter.languages.value, "go")',
+                count="data.coder_parameter.enable_go.value ? 1 : 0",
                 options=[
                     VersionEntry(value="gopls", label="gopls"),
                     VersionEntry(value="dlv", label="dlv (Delve debugger)"),
@@ -96,24 +96,24 @@ class GoPlugin:
             tools = [tools]
         gopls_version = str(selection.get("gopls_version", "latest"))
         dlv_version = str(selection.get("dlv_version", "latest"))
-        root = f"/workspace/.cdev/toolchains/go/{version}"
-        tarball = f"/workspace/.cdev/downloads/go{version}.linux-amd64.tar.gz"
+        root = f"/home/coder/.cdev/toolchains/go/{version}"
+        tarball = f"/home/coder/.cdev/downloads/go{version}.linux-amd64.tar.gz"
         url = f"https://go.dev/dl/go{version}.linux-amd64.tar.gz"
         actions: list[RuntimeAction] = [
             RuntimeAction(
                 id="go-downloads-dir",
                 type="ensure_dir",
-                values={"path": "/workspace/.cdev/downloads"},
+                values={"path": "/home/coder/.cdev/downloads"},
             ),
             RuntimeAction(
                 id="go-cache-dir",
                 type="ensure_dir",
-                values={"path": "/workspace/.cdev/cache/go/build"},
+                values={"path": "/home/coder/.cdev/cache/go/build"},
             ),
             RuntimeAction(
                 id="go-cache-mod-dir",
                 type="ensure_dir",
-                values={"path": "/workspace/.cdev/cache/go/pkg/mod"},
+                values={"path": "/home/coder/.cdev/cache/go/pkg/mod"},
             ),
             RuntimeAction(
                 id="go-download",
@@ -142,7 +142,7 @@ class GoPlugin:
             RuntimeAction(
                 id="go-bin-path",
                 type="path_prepend",
-                values={"path": "/workspace/.cdev/toolchains/go/bin"},
+                values={"path": "/home/coder/.cdev/toolchains/go/bin"},
             ),
             RuntimeAction(
                 id="go-verify",
@@ -159,8 +159,8 @@ class GoPlugin:
                     command=["go", "install", f"golang.org/x/tools/gopls@{gopls_version}"],
                     env={
                         "GOROOT": root,
-                        "GOBIN": "/workspace/.cdev/toolchains/go/bin",
-                        "GOPATH": "/workspace/.cdev/cache/go/gopath",
+                        "GOBIN": "/home/coder/.cdev/toolchains/go/bin",
+                        "GOPATH": "/home/coder/.cdev/cache/go/gopath",
                     },
                 )
             )
@@ -172,8 +172,8 @@ class GoPlugin:
                     command=["go", "install", f"github.com/go-delve/delve/cmd/dlv@{dlv_version}"],
                     env={
                         "GOROOT": root,
-                        "GOBIN": "/workspace/.cdev/toolchains/go/bin",
-                        "GOPATH": "/workspace/.cdev/cache/go/gopath",
+                        "GOBIN": "/home/coder/.cdev/toolchains/go/bin",
+                        "GOPATH": "/home/coder/.cdev/cache/go/gopath",
                     },
                 )
             )
@@ -182,9 +182,9 @@ class GoPlugin:
             actions=actions,
             env={
                 "GOROOT": root,
-                "GOBIN": "/workspace/.cdev/toolchains/go/bin",
-                "GOCACHE": "/workspace/.cdev/cache/go/build",
-                "GOMODCACHE": "/workspace/.cdev/cache/go/pkg/mod",
-                "GOPATH": "/workspace/.cdev/cache/go/gopath",
+                "GOBIN": "/home/coder/.cdev/toolchains/go/bin",
+                "GOCACHE": "/home/coder/.cdev/cache/go/build",
+                "GOMODCACHE": "/home/coder/.cdev/cache/go/pkg/mod",
+                "GOPATH": "/home/coder/.cdev/cache/go/gopath",
             },
         )

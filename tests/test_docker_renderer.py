@@ -292,6 +292,16 @@ def test_dockerfile_uses_discovered_sccache_asset_arg():
     assert "x86_64-unknown-linux-musl" not in text
 
 
+def test_dockerfile_uses_coder_home_as_default_workspace_root():
+    from pathlib import Path
+
+    text = Path("docker/Dockerfile").read_text()
+    assert "/home/coder/workspace" in text
+    assert "WORKDIR /home/coder" in text
+    assert "mkdir -p /workspace" not in text
+    assert "WORKDIR /workspace" not in text
+
+
 def test_build_matrix_uses_configured_image_repo():
     catalog = {
         "base": {"tag": "ubuntu-noble-20260511"},

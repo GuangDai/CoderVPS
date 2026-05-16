@@ -124,8 +124,8 @@ RUN set -eux; \
 
 
 RUN set -eux; \
-    mkdir -p /workspace /opt/cde/runtime /opt/cde/extensions /opt/cde/vsix /home/coder/.local/bin; \
-    chown -R coder:coder /workspace /home/coder
+    mkdir -p /home/coder/workspace /home/coder/.local/bin /opt/cde/runtime /opt/cde/extensions /opt/cde/vsix; \
+    chown -R coder:coder /home/coder
 
 USER coder
-WORKDIR /workspace
+WORKDIR /home/coder

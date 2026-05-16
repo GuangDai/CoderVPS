@@ -96,4 +96,4 @@ class ParameterSpec:
     mutable: bool
     order: int
     options: list[VersionEntry] = field(default_factory=list)
-    condition: str | None = None
+    count: str | None = None

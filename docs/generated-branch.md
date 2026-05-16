@@ -14,7 +14,7 @@ generated/
   manifest.json          # data lineage: source commit, workflow run, versions
 templates/
   devbox/
-    main.tf.json         # rendered Coder Terraform JSON template
+    main.tf         # rendered Coder Terraform HCL template
     startup.sh           # Coder entrypoint script
     runtime/
       startup.sh         # runtime entrypoint

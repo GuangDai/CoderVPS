@@ -51,7 +51,7 @@ class PythonPlugin:
                 default=catalog.defaults.get("version", "cpython@3.13"),
                 mutable=False,
                 order=10,
-                condition='contains(data.coder_parameter.languages.value, "python")',
+                count="data.coder_parameter.enable_python.value ? 1 : 0",
                 options=catalog.versions,
             ),
             ParameterSpec(
@@ -62,7 +62,7 @@ class PythonPlugin:
                 default='["ruff", "debugpy"]',
                 mutable=False,
                 order=11,
-                condition='contains(data.coder_parameter.languages.value, "python")',
+                count="data.coder_parameter.enable_python.value ? 1 : 0",
                 options=[
                     VersionEntry(value="ruff", label="ruff"),
                     VersionEntry(value="debugpy", label="debugpy"),
@@ -81,17 +81,17 @@ class PythonPlugin:
             RuntimeAction(
                 id="python-cache",
                 type="ensure_dir",
-                values={"path": "/workspace/.cdev/cache/uv"},
+                values={"path": "/home/coder/.cdev/cache/uv"},
             ),
             RuntimeAction(
                 id="python-toolchains-dir",
                 type="ensure_dir",
-                values={"path": "/workspace/.cdev/toolchains/python"},
+                values={"path": "/home/coder/.cdev/toolchains/python"},
             ),
             RuntimeAction(
                 id="python-bin-dir",
                 type="ensure_dir",
-                values={"path": "/workspace/.cdev/bin"},
+                values={"path": "/home/coder/.cdev/bin"},
             ),
             RuntimeAction(
                 id="python-install",
@@ -102,11 +102,11 @@ class PythonPlugin:
                     "install",
                     version,
                     "--install-dir",
-                    "/workspace/.cdev/toolchains/python",
+                    "/home/coder/.cdev/toolchains/python",
                 ],
                 env={
-                    "UV_PYTHON_INSTALL_DIR": "/workspace/.cdev/toolchains/python",
-                    "UV_CACHE_DIR": "/workspace/.cdev/cache/uv",
+                    "UV_PYTHON_INSTALL_DIR": "/home/coder/.cdev/toolchains/python",
+                    "UV_CACHE_DIR": "/home/coder/.cdev/cache/uv",
                 },
             ),
             RuntimeAction(
@@ -118,7 +118,7 @@ class PythonPlugin:
             RuntimeAction(
                 id="python-path",
                 type="path_prepend",
-                values={"path": "/workspace/.cdev/bin"},
+                values={"path": "/home/coder/.cdev/bin"},
             ),
         ]
         tool_actions = {
@@ -127,8 +127,8 @@ class PythonPlugin:
                 type="run",
                 command=["uv", "tool", "install", "ruff"],
                 env={
-                    "UV_TOOL_DIR": "/workspace/.cdev/toolchains/python-tools",
-                    "UV_TOOL_BIN_DIR": "/workspace/.cdev/bin",
+                    "UV_TOOL_DIR": "/home/coder/.cdev/toolchains/python-tools",
+                    "UV_TOOL_BIN_DIR": "/home/coder/.cdev/bin",
                 },
             ),
             "debugpy": RuntimeAction(
@@ -136,8 +136,8 @@ class PythonPlugin:
                 type="run",
                 command=["uv", "tool", "install", "debugpy"],
                 env={
-                    "UV_TOOL_DIR": "/workspace/.cdev/toolchains/python-tools",
-                    "UV_TOOL_BIN_DIR": "/workspace/.cdev/bin",
+                    "UV_TOOL_DIR": "/home/coder/.cdev/toolchains/python-tools",
+                    "UV_TOOL_BIN_DIR": "/home/coder/.cdev/bin",
                 },
             ),
             "ipython": RuntimeAction(
@@ -145,8 +145,8 @@ class PythonPlugin:
                 type="run",
                 command=["uv", "tool", "install", "ipython"],
                 env={
-                    "UV_TOOL_DIR": "/workspace/.cdev/toolchains/python-tools",
-                    "UV_TOOL_BIN_DIR": "/workspace/.cdev/bin",
+                    "UV_TOOL_DIR": "/home/coder/.cdev/toolchains/python-tools",
+                    "UV_TOOL_BIN_DIR": "/home/coder/.cdev/bin",
                 },
             ),
             "jupyter": RuntimeAction(
@@ -154,8 +154,8 @@ class PythonPlugin:
                 type="run",
                 command=["uv", "tool", "install", "jupyter"],
                 env={
-                    "UV_TOOL_DIR": "/workspace/.cdev/toolchains/python-tools",
-                    "UV_TOOL_BIN_DIR": "/workspace/.cdev/bin",
+                    "UV_TOOL_DIR": "/home/coder/.cdev/toolchains/python-tools",
+                    "UV_TOOL_BIN_DIR": "/home/coder/.cdev/bin",
                 },
             ),
         }
@@ -166,9 +166,9 @@ class PythonPlugin:
             plugin=self.id,
             actions=actions,
             env={
-                "UV_CACHE_DIR": "/workspace/.cdev/cache/uv",
-                "UV_PYTHON_INSTALL_DIR": "/workspace/.cdev/toolchains/python",
-                "UV_TOOL_DIR": "/workspace/.cdev/toolchains/python-tools",
-                "UV_TOOL_BIN_DIR": "/workspace/.cdev/bin",
+                "UV_CACHE_DIR": "/home/coder/.cdev/cache/uv",
+                "UV_PYTHON_INSTALL_DIR": "/home/coder/.cdev/toolchains/python",
+                "UV_TOOL_DIR": "/home/coder/.cdev/toolchains/python-tools",
+                "UV_TOOL_BIN_DIR": "/home/coder/.cdev/bin",
             },
         )

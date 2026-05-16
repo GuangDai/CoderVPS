@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# CDEV_RUNTIME_ROOT is configurable for tests, defaults to /workspace/.cdev
-export CDEV_RUNTIME_ROOT="${CDEV_RUNTIME_ROOT:-/workspace/.cdev}"
+# CDEV_RUNTIME_ROOT is configurable for tests, defaults to the persisted Coder home.
+export CDEV_RUNTIME_ROOT="${CDEV_RUNTIME_ROOT:-/home/coder/.cdev}"
 
 mkdir -p \
   "$CDEV_RUNTIME_ROOT/downloads" \

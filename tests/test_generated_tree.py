@@ -58,7 +58,8 @@ def test_render_generated_tree(tmp_path):
         },
     )
     assert (tmp_path / "generated/catalog/toolchains.json").exists()
-    assert (tmp_path / "templates/devbox/main.tf.json").exists()
+    assert (tmp_path / "templates/devbox/main.tf").exists()
+    assert not (tmp_path / "templates/devbox/main.tf.json").exists()
     manifest = (tmp_path / "generated/manifest.json").read_text()
     assert "source_commit" in manifest
     assert "workflow_run_id" in manifest
@@ -177,7 +178,27 @@ def test_render_generated_tree_creates_distinct_files(tmp_path):
     # Each file type should exist
     assert (tmp_path / "generated/catalog/toolchains.json").exists()
     assert (tmp_path / "generated/manifest.json").exists()
-    assert (tmp_path / "templates/devbox/main.tf.json").exists()
+    assert (tmp_path / "templates/devbox/main.tf").exists()
+
+
+def test_render_generated_tree_removes_stale_main_tf_json(tmp_path):
+    stale = tmp_path / "templates/devbox/main.tf.json"
+    stale.parent.mkdir(parents=True)
+    stale.write_text("{}\n")
+
+    render_generated_tree(
+        output_dir=tmp_path,
+        catalog={
+            "schema_version": 1,
+            "base": {"tag": "ubuntu-noble-20260511"},
+            "node": {"majors": {"24": {"version": "24.11.1"}}},
+            "plugins": {"python": {}, "rust": {}, "go": {}, "cpp": {}},
+        },
+        images={"images": []},
+    )
+
+    assert (tmp_path / "templates/devbox/main.tf").exists()
+    assert not stale.exists()
 
 
 def test_render_generated_tree_does_not_create_images_json(tmp_path):

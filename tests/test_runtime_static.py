@@ -31,7 +31,7 @@ def test_runtime_does_not_use_shared_cache_root():
 
 def test_runtime_uses_workspace_cdev_root():
     text = _all_sh_text()
-    assert "/workspace/.cdev" in text
+    assert "/home/coder/.cdev" in text
 
 
 def test_runtime_uses_cdev_runtime_root_variable():
@@ -154,7 +154,7 @@ def test_run_actions_reads_cdev_runtime_root_from_env():
 
 def test_startup_script_sets_cdev_runtime_root_default():
     startup = Path("runtime/startup.sh").read_text()
-    assert 'CDEV_RUNTIME_ROOT="${CDEV_RUNTIME_ROOT:-/workspace/.cdev}"' in startup
+    assert 'CDEV_RUNTIME_ROOT="${CDEV_RUNTIME_ROOT:-/home/coder/.cdev}"' in startup
 
 
 # ---- Actions.sh uses variable path ----

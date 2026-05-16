@@ -7,7 +7,7 @@ and isolated workspace runtimes.
 
 - **`master`** -- source code: Python generator (`codervps/`), config (`config/`),
   Dockerfile (`docker/`), runtime shell modules (`runtime/`), tests, workflows.
-- **`generated`** -- publishable output: rendered Terraform JSON, catalogs,
+- **`generated`** -- publishable output: rendered Terraform HCL, catalogs,
   extension lists, images.json, runtime files. The VPS consumes this branch;
   it does not run the generator.
 
@@ -73,8 +73,9 @@ the catalog generator. Those actions happen in GitHub Actions.
 
 ## Workspace Lifecycle
 
-- Each workspace owns one persistent Docker volume mounted at `/workspace`.
-  All toolchain data, caches, and downloads live under `/workspace/.cdev`.
+- Each workspace owns one persistent Docker volume mounted at `/home/coder`.
+  Projects live under `/home/coder/workspace`; CoderVPS state, toolchains,
+  caches, and downloads live under `/home/coder/.cdev`.
 - Language and version selections are immutable after workspace creation.
 - Normal Coder workspace deletion destroys the volume through Terraform destroy.
 - The volume uses `lifecycle { ignore_changes = all }` to prevent accidental
@@ -102,8 +103,9 @@ been deleted from Coder.
 ## Workspace Directory Layout
 
 ```
-/workspace/
-  <user projects>
+/home/coder/
+  workspace/
+    <user projects>
   .cdev/
     selection.json
     runtime-plan.json

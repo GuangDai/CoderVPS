@@ -1,7 +1,7 @@
 """Runtime action executor for CoderVPS workspace startup.
 
 Executes a JSON runtime plan with 9 action types. All writes are strictly
-scoped to paths under /workspace/.cdev (except for code-server user config).
+scoped to paths under /home/coder/.cdev (except for code-server user config).
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ import tempfile
 from pathlib import Path
 from urllib.request import urlopen
 
-CDEV_RUNTIME_ROOT = Path(os.environ.get("CDEV_RUNTIME_ROOT", "/workspace/.cdev"))
+CDEV_RUNTIME_ROOT = Path(os.environ.get("CDEV_RUNTIME_ROOT", "/home/coder/.cdev"))
 STATE_ROOT = CDEV_RUNTIME_ROOT / "state"
 TMP_ROOT = CDEV_RUNTIME_ROOT / "tmp"
 

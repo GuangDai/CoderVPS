@@ -37,7 +37,7 @@ class RustPlugin:
                 default="stable",
                 mutable=False,
                 order=20,
-                condition='contains(data.coder_parameter.languages.value, "rust")',
+                count="data.coder_parameter.enable_rust.value ? 1 : 0",
                 options=catalog.versions,
             ),
         ]
@@ -47,27 +47,27 @@ class RustPlugin:
         return RuntimePlan(
             plugin=self.id,
             env={
-                "RUSTUP_HOME": "/workspace/.cdev/toolchains/rust/rustup",
-                "CARGO_HOME": "/workspace/.cdev/toolchains/rust/cargo",
-                "CARGO_INSTALL_ROOT": "/workspace/.cdev/toolchains/rust/cargo-install",
-                "SCCACHE_DIR": "/workspace/.cdev/cache/sccache",
+                "RUSTUP_HOME": "/home/coder/.cdev/toolchains/rust/rustup",
+                "CARGO_HOME": "/home/coder/.cdev/toolchains/rust/cargo",
+                "CARGO_INSTALL_ROOT": "/home/coder/.cdev/toolchains/rust/cargo-install",
+                "SCCACHE_DIR": "/home/coder/.cdev/cache/sccache",
                 "RUSTC_WRAPPER": "sccache",
             },
             actions=[
                 RuntimeAction(
                     id="rust-cache-sccache",
                     type="ensure_dir",
-                    values={"path": "/workspace/.cdev/cache/sccache"},
+                    values={"path": "/home/coder/.cdev/cache/sccache"},
                 ),
                 RuntimeAction(
                     id="rust-toolchains-dir",
                     type="ensure_dir",
-                    values={"path": "/workspace/.cdev/toolchains/rust/rustup"},
+                    values={"path": "/home/coder/.cdev/toolchains/rust/rustup"},
                 ),
                 RuntimeAction(
                     id="rust-cargo-dir",
                     type="ensure_dir",
-                    values={"path": "/workspace/.cdev/toolchains/rust/cargo"},
+                    values={"path": "/home/coder/.cdev/toolchains/rust/cargo"},
                 ),
                 RuntimeAction(
                     id="rust-install",
@@ -81,8 +81,8 @@ class RustPlugin:
                         "minimal",
                     ],
                     env={
-                        "RUSTUP_HOME": "/workspace/.cdev/toolchains/rust/rustup",
-                        "CARGO_HOME": "/workspace/.cdev/toolchains/rust/cargo",
+                        "RUSTUP_HOME": "/home/coder/.cdev/toolchains/rust/rustup",
+                        "CARGO_HOME": "/home/coder/.cdev/toolchains/rust/cargo",
                     },
                 ),
                 RuntimeAction(
@@ -99,8 +99,8 @@ class RustPlugin:
                         toolchain,
                     ],
                     env={
-                        "RUSTUP_HOME": "/workspace/.cdev/toolchains/rust/rustup",
-                        "CARGO_HOME": "/workspace/.cdev/toolchains/rust/cargo",
+                        "RUSTUP_HOME": "/home/coder/.cdev/toolchains/rust/rustup",
+                        "CARGO_HOME": "/home/coder/.cdev/toolchains/rust/cargo",
                     },
                 ),
                 RuntimeAction(
@@ -108,14 +108,14 @@ class RustPlugin:
                     type="run",
                     command=["rustup", "default", toolchain],
                     env={
-                        "RUSTUP_HOME": "/workspace/.cdev/toolchains/rust/rustup",
-                        "CARGO_HOME": "/workspace/.cdev/toolchains/rust/cargo",
+                        "RUSTUP_HOME": "/home/coder/.cdev/toolchains/rust/rustup",
+                        "CARGO_HOME": "/home/coder/.cdev/toolchains/rust/cargo",
                     },
                 ),
                 RuntimeAction(
                     id="rust-path",
                     type="path_prepend",
-                    values={"path": "/workspace/.cdev/toolchains/rust/cargo/bin"},
+                    values={"path": "/home/coder/.cdev/toolchains/rust/cargo/bin"},
                 ),
                 RuntimeAction(
                     id="rust-verify",

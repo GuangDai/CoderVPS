@@ -1,6 +1,6 @@
 """Render the full generated branch tree.
 
-Orchestrates: catalog JSON, manifest.json, Terraform JSON template,
+Orchestrates: catalog JSON, manifest.json, Terraform HCL template,
 runtime shell files, extension lists, and VSIX README markers.
 
 images.json is intentionally NOT written by default -- it must be written
@@ -19,7 +19,7 @@ from pathlib import Path
 from codervps import __version__
 from codervps.config import load_extensions_config
 from codervps.render.extensions import render_extensions
-from codervps.render.template import render_main_tf_json
+from codervps.render.template import render_main_tf_hcl
 
 
 def _write_json_sorted(path: Path, data: object) -> None:
@@ -114,9 +114,13 @@ def render_generated_tree(
     }
     _write_json_sorted(output_dir / "generated/manifest.json", manifest)
 
-    # --- Terraform JSON template ---
+    # --- Terraform template ---
     template_dir = output_dir / "templates/devbox"
-    _write_json_sorted(template_dir / "main.tf.json", render_main_tf_json(images, catalog))
+    template_dir.mkdir(parents=True, exist_ok=True)
+    legacy_json_template = template_dir / "main.tf.json"
+    if legacy_json_template.exists():
+        legacy_json_template.unlink()
+    (template_dir / "main.tf").write_text(render_main_tf_hcl(images, catalog))
 
     # --- Runtime shell files ---
     _copy_runtime_files(output_dir)

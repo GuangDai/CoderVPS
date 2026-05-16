@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-: "${CDEV_RUNTIME_ROOT:=/workspace/.cdev}"
+: "${CDEV_RUNTIME_ROOT:=/home/coder/.cdev}"
 
 cdev_run_actions() {
   local plan="$1"

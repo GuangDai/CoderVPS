@@ -401,7 +401,7 @@ def test_readme_has_all_required_sections():
     required = [
         "generated branch",
         "GitHub CLI is not required",
-        "/workspace/.cdev",
+        "/home/coder/.cdev",
         "noble-YYYYMMDD-node",
         "sync-generated",
         "push-template",
@@ -423,7 +423,7 @@ def test_generated_branch_doc_has_all_required_sections():
     text = Path(ROOT / "docs/generated-branch.md").read_text()
     assert "toolchains.json" in text
     assert "images.json" in text
-    assert "main.tf.json" in text
+    assert "main.tf" in text
     assert "--force-with-lease" in text
     assert "catalog" in text
 

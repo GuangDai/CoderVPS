@@ -38,20 +38,20 @@ class CppPlugin:
                 default=catalog.defaults.get("llvm", "19"),
                 mutable=False,
                 order=40,
-                condition='contains(data.coder_parameter.languages.value, "cpp")',
+                count="data.coder_parameter.enable_cpp.value ? 1 : 0",
                 options=catalog.versions,
             ),
         ]
 
     def runtime_plan(self, selection: dict) -> RuntimePlan:
         llvm = str(selection.get("llvm", "19"))
-        root = f"/workspace/.cdev/toolchains/llvm/{llvm}"
+        root = f"/home/coder/.cdev/toolchains/llvm/{llvm}"
         is_prebundled = llvm == "19"
         actions: list[RuntimeAction] = [
             RuntimeAction(
                 id="cpp-cache-ccache",
                 type="ensure_dir",
-                values={"path": "/workspace/.cdev/cache/ccache"},
+                values={"path": "/home/coder/.cdev/cache/ccache"},
             ),
             RuntimeAction(
                 id="cpp-llvm-dir",
@@ -78,7 +78,7 @@ class CppPlugin:
         return RuntimePlan(
             plugin=self.id,
             env={
-                "CCACHE_DIR": "/workspace/.cdev/cache/ccache",
+                "CCACHE_DIR": "/home/coder/.cdev/cache/ccache",
             },
             actions=actions,
         )

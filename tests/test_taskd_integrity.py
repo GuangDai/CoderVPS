@@ -194,8 +194,8 @@ def test_extra_extension_packs_parameter():
     assert extra["type"] == "list(string)"
     assert extra["form_type"] == "multi-select"
     assert extra["mutable"] is False
-    assert extra["default"] == "[]"
-    assert extra["order"] == 3
+    assert extra["default"] == []
+    assert extra["order"] == 50
     assert "option" in extra
 
 
@@ -233,7 +233,7 @@ def test_readme_mentions_generated_branch_and_no_gh_cli():
     text = Path(ROOT / "README.md").read_text()
     assert "generated branch" in text, "README missing mention of 'generated branch'"
     assert "GitHub CLI is not required" in text, "README missing 'GitHub CLI is not required'"
-    assert "/workspace/.cdev" in text, "README missing '/workspace/.cdev'"
+    assert "/home/coder/.cdev" in text, "README missing '/home/coder/.cdev'"
 
 
 def test_vsix_docs_say_binaries_are_not_committed():

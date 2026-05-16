@@ -186,20 +186,20 @@ def test_plugin_coder_parameters():
             assert param.mutable is False
 
 
-def test_python_coder_parameters_has_condition():
+def test_python_coder_parameters_has_count():
     p = PythonPlugin()
     cat = p.discover(fixture_dir="tests/fixtures")
     params = p.coder_parameters(cat)
-    conditions = [param.condition for param in params if param.condition]
-    assert any("python" in c for c in conditions if c)
+    counts = [param.count for param in params if param.count]
+    assert any("enable_python" in c for c in counts if c)
 
 
-def test_go_coder_parameters_has_condition():
+def test_go_coder_parameters_has_count():
     p = GoPlugin()
     cat = p.discover(fixture_dir="tests/fixtures")
     params = p.coder_parameters(cat)
-    conditions = [param.condition for param in params if param.condition]
-    assert any("go" in c for c in conditions if c)
+    counts = [param.count for param in params if param.count]
+    assert any("enable_go" in c for c in counts if c)
 
 
 # ---- Python runtime plan ----
@@ -213,7 +213,7 @@ def test_python_runtime_plan_uses_workspace_paths():
     all_values = [str(action.values) for action in plan.actions]
     all_envs = [str(action.env) for action in plan.actions]
     combined = " ".join(all_values) + " " + str(plan.env) + " " + " ".join(all_envs)
-    assert "/workspace/.cdev" in combined
+    assert "/home/coder/.cdev" in combined
 
 
 def test_python_tools_are_individually_selectable():
@@ -262,10 +262,10 @@ def test_python_runtime_plan_all_optional_tools():
 def test_python_runtime_plan_env_vars():
     plugin = load_plugins(["python"])[0]
     plan = plugin.runtime_plan({"version": "3.13"})
-    assert plan.env["UV_CACHE_DIR"] == "/workspace/.cdev/cache/uv"
-    assert plan.env["UV_PYTHON_INSTALL_DIR"] == "/workspace/.cdev/toolchains/python"
-    assert plan.env["UV_TOOL_DIR"] == "/workspace/.cdev/toolchains/python-tools"
-    assert plan.env["UV_TOOL_BIN_DIR"] == "/workspace/.cdev/bin"
+    assert plan.env["UV_CACHE_DIR"] == "/home/coder/.cdev/cache/uv"
+    assert plan.env["UV_PYTHON_INSTALL_DIR"] == "/home/coder/.cdev/toolchains/python"
+    assert plan.env["UV_TOOL_DIR"] == "/home/coder/.cdev/toolchains/python-tools"
+    assert plan.env["UV_TOOL_BIN_DIR"] == "/home/coder/.cdev/bin"
 
 
 def test_python_runtime_plan_has_verify_action():
@@ -310,9 +310,9 @@ def test_rust_runtime_plan_installs_components():
 def test_rust_runtime_plan_env_vars():
     plugin = load_plugins(["rust"])[0]
     plan = plugin.runtime_plan({"toolchain": "stable"})
-    assert plan.env["RUSTUP_HOME"] == "/workspace/.cdev/toolchains/rust/rustup"
-    assert plan.env["CARGO_HOME"] == "/workspace/.cdev/toolchains/rust/cargo"
-    assert plan.env["SCCACHE_DIR"] == "/workspace/.cdev/cache/sccache"
+    assert plan.env["RUSTUP_HOME"] == "/home/coder/.cdev/toolchains/rust/rustup"
+    assert plan.env["CARGO_HOME"] == "/home/coder/.cdev/toolchains/rust/cargo"
+    assert plan.env["SCCACHE_DIR"] == "/home/coder/.cdev/cache/sccache"
     assert plan.env["RUSTC_WRAPPER"] == "sccache"
 
 
@@ -343,7 +343,7 @@ def test_rust_runtime_plan_isolation():
     plan = plugin.runtime_plan({"toolchain": "stable"})
     all_paths = str(plan.env) + str(plan.actions)
     assert "/opt/cde/cache" not in all_paths
-    assert "/workspace/.cdev" in all_paths
+    assert "/home/coder/.cdev" in all_paths
 
 
 # ---- Go runtime plan ----
@@ -395,11 +395,11 @@ def test_go_runtime_plan_missing_sha256_fails_fast():
 def test_go_runtime_plan_env_vars():
     plugin = load_plugins(["go"])[0]
     plan = plugin.runtime_plan(_go_selection())
-    assert plan.env["GOROOT"] == "/workspace/.cdev/toolchains/go/1.22.12"
-    assert plan.env["GOBIN"] == "/workspace/.cdev/toolchains/go/bin"
-    assert plan.env["GOCACHE"] == "/workspace/.cdev/cache/go/build"
-    assert plan.env["GOMODCACHE"] == "/workspace/.cdev/cache/go/pkg/mod"
-    assert plan.env["GOPATH"] == "/workspace/.cdev/cache/go/gopath"
+    assert plan.env["GOROOT"] == "/home/coder/.cdev/toolchains/go/1.22.12"
+    assert plan.env["GOBIN"] == "/home/coder/.cdev/toolchains/go/bin"
+    assert plan.env["GOCACHE"] == "/home/coder/.cdev/cache/go/build"
+    assert plan.env["GOMODCACHE"] == "/home/coder/.cdev/cache/go/pkg/mod"
+    assert plan.env["GOPATH"] == "/home/coder/.cdev/cache/go/gopath"
 
 
 def test_go_runtime_plan_extract_creates():
@@ -451,20 +451,20 @@ def test_cpp_runtime_plan_uses_llvm():
     plugin = load_plugins(["cpp"])[0]
     plan = plugin.runtime_plan({"llvm": "19"})
     env_paths = str(plan.env) + str(plan.actions)
-    assert "/workspace/.cdev/toolchains/llvm/19" in env_paths
+    assert "/home/coder/.cdev/toolchains/llvm/19" in env_paths
 
 
 def test_cpp_runtime_plan_env_vars():
     plugin = load_plugins(["cpp"])[0]
     plan = plugin.runtime_plan({"llvm": "19"})
-    assert plan.env["CCACHE_DIR"] == "/workspace/.cdev/cache/ccache"
+    assert plan.env["CCACHE_DIR"] == "/home/coder/.cdev/cache/ccache"
 
 
 def test_cpp_runtime_plan_default_llvm():
     plugin = load_plugins(["cpp"])[0]
     plan = plugin.runtime_plan({})
     env_paths = str(plan.env) + str(plan.actions)
-    assert "/workspace/.cdev" in env_paths
+    assert "/home/coder/.cdev" in env_paths
 
 
 def test_cpp_runtime_plan_has_ensure_dir():
@@ -569,6 +569,6 @@ def test_all_plugins_workspace_cdev_in_all_actions():
                 "symlink",
                 "write_file",
             ):
-                assert "/workspace/.cdev" in text, (
+                assert "/home/coder/.cdev" in text, (
                     f"{plugin.id} action {action.id} ({action.type}) missing workspace path"
                 )

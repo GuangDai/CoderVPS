@@ -1,4 +1,4 @@
-"""Tests for codervps.render.template -- main.tf.json rendering."""
+"""Tests for codervps.render.template compatibility structure."""
 
 from __future__ import annotations
 
@@ -70,7 +70,7 @@ def test_render_has_resource_blocks():
 # ---- Volume isolation ----
 
 
-def test_main_tf_json_contains_isolated_workspace_volume():
+def test_main_tf_json_contains_isolated_home_volume():
     doc = render_main_tf_json(
         images={
             "images": [
@@ -83,17 +83,17 @@ def test_main_tf_json_contains_isolated_workspace_volume():
         catalog={"plugins": {"python": {}, "rust": {}, "go": {}, "cpp": {}}},
     )
     resources = doc["resource"]
-    volume = resources["docker_volume"]["workspace"]
-    assert volume["name"] == "coder-${data.coder_workspace.me.id}-workspace"
+    volume = resources["docker_volume"]["home"]
+    assert volume["name"] == "coder-${data.coder_workspace.me.id}-home"
     assert volume["lifecycle"]["ignore_changes"] == "all"
     container = resources["docker_container"]["workspace"]
-    assert container["volumes"][0]["container_path"] == "/workspace"
-    assert container["volumes"][0]["volume_name"] == "${docker_volume.workspace.name}"
+    assert container["volumes"][0]["container_path"] == "/home/coder"
+    assert container["volumes"][0]["volume_name"] == "${docker_volume.home.name}"
 
 
 def test_volume_has_coder_labels():
     doc = render_main_tf_json(images={"images": []}, catalog={"plugins": {}})
-    volume = doc["resource"]["docker_volume"]["workspace"]
+    volume = doc["resource"]["docker_volume"]["home"]
     labels = volume["labels"]
     label_keys = [lbl["label"] for lbl in labels]
     assert "coder.workspace_id" in label_keys
@@ -104,10 +104,10 @@ def test_volume_has_coder_labels():
 
 
 def test_parameters_are_immutable():
-    doc = render_main_tf_json(images={"images": []}, catalog={"plugins": {}})
+    doc = render_main_tf_json(images={"images": []}, catalog={"plugins": {"python": {}}})
     params = doc["data"]["coder_parameter"]
     assert params["node_major"]["mutable"] is False
-    assert params["languages"]["mutable"] is False
+    assert params["enable_python"]["mutable"] is False
     # Language-specific params also immutable
     for key, param in params.items():
         if key not in ("node_major", "languages"):
@@ -152,16 +152,21 @@ def test_node_major_parameter():
     assert len(param["option"]) == 5
 
 
-# ---- Languages parameter ----
+# ---- Enable language parameters ----
 
 
-def test_languages_parameter():
-    doc = render_main_tf_json(images={"images": []}, catalog={"plugins": {}})
-    param = doc["data"]["coder_parameter"]["languages"]
-    assert param["name"] == "languages"
-    assert param["type"] == "list(string)"
-    assert param["default"] == '["python"]'
-    assert len(param["option"]) == 4
+def test_enable_language_parameters():
+    doc = render_main_tf_json(
+        images={"images": []}, catalog={"plugins": {"python": {}, "rust": {}, "go": {}, "cpp": {}}}
+    )
+    params = doc["data"]["coder_parameter"]
+    assert params["enable_python"]["name"] == "enable_python"
+    assert params["enable_python"]["type"] == "bool"
+    assert params["enable_python"]["form_type"] == "checkbox"
+    assert params["enable_python"]["default"] is True
+    assert params["enable_go"]["default"] is False
+    assert params["enable_rust"]["default"] is False
+    assert params["enable_cpp"]["default"] is False
 
 
 # ---- Language-specific parameters ----
@@ -174,7 +179,7 @@ def test_python_parameters_present():
     params = doc["data"]["coder_parameter"]
     assert "python_version" in params
     assert "python_tools" in params
-    assert params["python_version"]["condition"]
+    assert params["python_version"]["count"] == "data.coder_parameter.enable_python.value ? 1 : 0"
 
 
 def test_rust_parameters_present():
@@ -183,7 +188,7 @@ def test_rust_parameters_present():
     )
     params = doc["data"]["coder_parameter"]
     assert "rust_toolchain" in params
-    assert params["rust_toolchain"]["condition"]
+    assert params["rust_toolchain"]["count"] == "data.coder_parameter.enable_rust.value ? 1 : 0"
 
 
 def test_go_parameters_present():
@@ -193,7 +198,7 @@ def test_go_parameters_present():
     params = doc["data"]["coder_parameter"]
     assert "go_version" in params
     assert "go_tools" in params
-    assert params["go_version"]["condition"]
+    assert params["go_version"]["count"] == "data.coder_parameter.enable_go.value ? 1 : 0"
 
 
 def test_cpp_parameters_present():
@@ -202,16 +207,15 @@ def test_cpp_parameters_present():
     )
     params = doc["data"]["coder_parameter"]
     assert "cpp_llvm" in params
-    assert params["cpp_llvm"]["condition"]
+    assert params["cpp_llvm"]["count"] == "data.coder_parameter.enable_cpp.value ? 1 : 0"
 
 
-def test_condition_contains_language_reference():
+def test_count_references_language_enable_parameter():
     doc = render_main_tf_json(images={"images": []}, catalog={"plugins": {"python": {}}})
     params = doc["data"]["coder_parameter"]
     assert "python_version" in params
-    condition = params["python_version"]["condition"]
-    assert "data.coder_parameter.languages.value" in condition
-    assert '"python"' in condition
+    count = params["python_version"]["count"]
+    assert "data.coder_parameter.enable_python.value" in count
 
 
 # ---- Container configuration ----
@@ -241,10 +245,10 @@ def test_container_mounts_opt_cde_readonly():
         assert mount["read_only"] is True
 
 
-def test_workspace_volume_read_write():
+def test_home_volume_read_write():
     doc = render_main_tf_json(images={"images": []}, catalog={"plugins": {}})
     container = doc["resource"]["docker_container"]["workspace"]
-    ws_mount = [v for v in container["volumes"] if v["container_path"] == "/workspace"][0]
+    ws_mount = [v for v in container["volumes"] if v["container_path"] == "/home/coder"][0]
     assert ws_mount["read_only"] is False
 
 
@@ -255,7 +259,9 @@ def test_agent_configuration():
     doc = render_main_tf_json(images={"images": []}, catalog={"plugins": {}})
     agent = doc["resource"]["coder_agent"]["main"]
     assert agent["os"] == "linux"
-    assert agent["dir"] == "/workspace"
+    assert "dir" not in agent
+    assert agent["display_apps"]["web_terminal"] is True
+    assert agent["display_apps"]["ssh_helper"] is True
     assert "startup_script" in agent
 
 
@@ -330,16 +336,16 @@ def test_node_major_is_first_parameter():
     assert params["node_major"]["order"] == 1
 
 
-def test_languages_is_second_parameter():
-    doc = render_main_tf_json(images={"images": []}, catalog={"plugins": {}})
+def test_enable_python_order_after_node_major():
+    doc = render_main_tf_json(images={"images": []}, catalog={"plugins": {"python": {}}})
     params = doc["data"]["coder_parameter"]
-    assert params["languages"]["order"] == 2
+    assert params["enable_python"]["order"] > params["node_major"]["order"]
 
 
 def test_language_parameters_have_higher_order():
     doc = render_main_tf_json(images={"images": []}, catalog={"plugins": {"python": {}}})
     params = doc["data"]["coder_parameter"]
-    assert params["python_version"]["order"] > params["languages"]["order"]
+    assert params["python_version"]["order"] > params["enable_python"]["order"]
 
 
 # ---- Missing plugins skip parameters ----
