@@ -1,6 +1,8 @@
 name: Generate CoderVPS Images
 
 on:
+  push:
+    branches: [master]
   workflow_dispatch:
     inputs:
       allow_rebuild_date_tag:
