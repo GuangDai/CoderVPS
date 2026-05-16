@@ -37,7 +37,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /opt/coder-cde/templates:/templates:ro
-      - /opt/coder-cde/extensions:/opt/coder-cde/extensions:ro
+      - /opt/coder-cde/templates/devbox/extensions:/opt/coder-cde/extensions:ro
       - /opt/coder-cde/vsix:/opt/coder-cde/vsix:ro
     ports:
       - "127.0.0.1:7080:7080"

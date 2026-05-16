@@ -328,6 +328,7 @@ def _startup_script_hcl() -> str:
     export CDEV_SELECTION_JSON='${{jsonencode(local.cdev_selection)}}'
 
     mkdir -p "{PROJECT_DIR}" "$HOME/.config/code-server" "$CDEV_RUNTIME_ROOT"
+    mkdir -p "$HOME/.local/share/code-server/extensions"
 
     printf '%s\\n' \\
       'bind-addr: 127.0.0.1:13337' \\
@@ -338,17 +339,70 @@ def _startup_script_hcl() -> str:
     code_server_health="http://127.0.0.1:13337/healthz"
     code_server_pid="/tmp/code-server.pid"
     code_server_log="/tmp/code-server.log"
+    code_server_extensions_dir="$HOME/.local/share/code-server/extensions"
+
+    install_code_server_extensions() {{
+      log "Installing code-server extensions"
+
+      mkdir -p "$code_server_extensions_dir"
+
+      log "Installing VSIX files from /opt/cde/vsix"
+
+      while IFS= read -r vsix_file; do
+        [ -f "$vsix_file" ] || continue
+
+        log "Installing VSIX: $vsix_file"
+
+        code-server \\
+          --extensions-dir "$code_server_extensions_dir" \\
+          --install-extension "$vsix_file" \\
+          --force || {{
+            log "Failed to install VSIX: $vsix_file"
+          }}
+      done < <(find /opt/cde/vsix -type f -name "*.vsix" 2>/dev/null | sort)
+
+      log "Installing extension IDs from /opt/cde/extensions/*.txt"
+
+      while IFS= read -r manifest_file; do
+        [ -f "$manifest_file" ] || continue
+
+        log "Reading extension manifest: $manifest_file"
+
+        while IFS= read -r extension_id || [ -n "$extension_id" ]; do
+          extension_id="$(printf '%s' "$extension_id" | sed 's/#.*$//' | xargs)"
+          [ -n "$extension_id" ] || continue
+
+          log "Installing extension ID: $extension_id"
+
+          code-server \\
+            --extensions-dir "$code_server_extensions_dir" \\
+            --install-extension "$extension_id" \\
+            --force || {{
+              log "Failed to install extension ID: $extension_id"
+            }}
+        done < "$manifest_file"
+      done < <(find /opt/cde/extensions -type f -name "*.txt" 2>/dev/null | sort)
+
+      log "Installed extensions:"
+      code-server \\
+        --extensions-dir "$code_server_extensions_dir" \\
+        --list-extensions || true
+    }}
+
+    if ! command -v code-server >/dev/null 2>&1; then
+      echo "code-server not found in PATH" >&2
+      exit 1
+    fi
+
+    log "code-server version"
+    code-server --version || true
+
+    install_code_server_extensions
 
     if curl -fsS "$code_server_health" >/dev/null 2>&1; then
       log "code-server already healthy"
     else
-      if ! command -v code-server >/dev/null 2>&1; then
-        echo "code-server not found in PATH" >&2
-        exit 1
-      fi
-
       log "Starting code-server"
-      code-server --version || true
 
       rm -f "$code_server_log"
       touch "$code_server_log"
@@ -359,6 +413,7 @@ def _startup_script_hcl() -> str:
           --disable-telemetry \\
           --disable-update-check \\
           --bind-addr 127.0.0.1:13337 \\
+          --extensions-dir "$code_server_extensions_dir" \\
           "{PROJECT_DIR}" \\
           > "$code_server_log" 2>&1 < /dev/null &
       else
@@ -367,6 +422,7 @@ def _startup_script_hcl() -> str:
           --disable-telemetry \\
           --disable-update-check \\
           --bind-addr 127.0.0.1:13337 \\
+          --extensions-dir "$code_server_extensions_dir" \\
           "{PROJECT_DIR}" \\
           > "$code_server_log" 2>&1 < /dev/null &
       fi
@@ -382,8 +438,9 @@ def _startup_script_hcl() -> str:
 
         if [ -s "$code_server_pid" ]; then
           if ! kill -0 "$(cat "$code_server_pid")" 2>/dev/null; then
-            log "code-server process is not running yet or exited"
+            log "code-server process exited"
             tail -n 120 "$code_server_log" >&2 || true
+            break
           fi
         fi
 
@@ -430,6 +487,7 @@ def _startup_script_hcl() -> str:
     tail -n 200 "$code_server_log" >&2 || true
     exit 1
   EOT"""
+
 
 
 def _render_enable_locals(catalog: dict) -> str:
@@ -662,7 +720,7 @@ resource "docker_container" "workspace" {{
   }}
 
   volumes {{
-    host_path      = "/opt/coder-cde/extensions"
+    host_path      = "/opt/coder-cde/templates/devbox/extensions"
     container_path = "/opt/cde/extensions"
     read_only      = true
   }}
