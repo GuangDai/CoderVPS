@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from .extensions import _LANGUAGES
+
 
 def _make_node_options(catalog: dict) -> list[dict]:
     """Build Node.js dropdown options from catalog node majors (descending)."""
@@ -91,7 +93,7 @@ def _make_language_parameters(catalog: dict) -> dict:
     plugin_param_orders = {"python": (10, 19), "rust": (20, 29), "go": (30, 39), "cpp": (40, 49)}
     plugin_labels = {"python": "Python", "rust": "Rust", "go": "Go", "cpp": "C/C++"}
 
-    for plugin_id in ["python", "rust", "go", "cpp"]:
+    for plugin_id in _LANGUAGES:
         if plugin_id not in plugins:
             continue
         order_range = plugin_param_orders.get(plugin_id, (50, 59))

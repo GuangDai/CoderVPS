@@ -1,16 +1,23 @@
 #!/usr/bin/env bash
-# cdev - small management helper for this Coder CDE installation.
+# cdev - thin VPS helper for Coder development environment operations.
+#
+# This script is the VPS-side operator tool.  It does NOT:
+#   - build Docker images
+#   - patch template source files
+#   - run the catalog generator
+#   - refresh or render generated output
 #
 # Safety rules:
-# - Never modifies UFW / fail2ban / iptables / nftables.
-# - Never edits Dockerfile unless you do it manually.
-# - Never injects extra coder_script resources.
-# - Keeps backups under /opt/coder-cde/backups.
+#   - Never modifies UFW / fail2ban / iptables / nftables.
+#   - Never prunes Docker volumes (they are Coder-managed).
+#   - Never deletes workspace data.
+#   - sync-generated writes into a temp directory, validates, then atomically
+#     switches the live template directory under a flock lock.
 
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-VERSION="2026-05-10.v9.1"
+VERSION="2026-05-15.v10.0"
 
 ROOT="${CODER_CDE_ROOT:-/opt/coder-cde}"
 DOMAIN="${DOMAIN:-${CODER_DOMAIN:-code.549304.xyz}}"
@@ -19,6 +26,7 @@ TEMPLATE_NAME="${TEMPLATE_NAME:-devbox}"
 DEVBOX_IMAGE="${DEVBOX_IMAGE:-coder-devbox:latest}"
 CODER_URL="${CODER_URL:-https://${DOMAIN}}"
 BACKUP_ROOT="${CDEV_BACKUP_ROOT:-$ROOT/backups}"
+LOCK_DIR="${CDEV_LOCK_DIR:-/opt/coder-cde/.locks}"
 
 log() { printf '\033[1;34m==>\033[0m %s\n' "$*" >&2; }
 warn() { printf '\033[1;33mWARN:\033[0m %s\n' "$*" >&2; }
@@ -33,16 +41,16 @@ have() {
 }
 
 need_root() {
-  [[ "${EUID}" -eq 0 ]] || die "这个命令需要 root 权限，请用 sudo 执行。"
+  [[ "${EUID}" -eq 0 ]] || die "this command requires root; use sudo."
 }
 
 need_root_dir() {
-  [[ -d "$ROOT" ]] || die "找不到 ROOT=$ROOT。可设置 CODER_CDE_ROOT=/opt/coder-cde"
+  [[ -d "$ROOT" ]] || die "ROOT=$ROOT not found. Set CODER_CDE_ROOT=/opt/coder-cde"
 }
 
 need_compose() {
   need_root_dir
-  [[ -f "$COMPOSE_FILE" ]] || die "找不到 Docker Compose 文件：$COMPOSE_FILE"
+  [[ -f "$COMPOSE_FILE" ]] || die "Docker Compose file not found: $COMPOSE_FILE"
 }
 
 dc() {
@@ -58,13 +66,20 @@ coder_service() {
   local svc
   svc="$(compose_services | grep -x 'coder' | head -n1 || true)"
   [[ -n "$svc" ]] || svc="$(compose_services | grep -Ei 'coder|coderd' | head -n1 || true)"
-  [[ -n "$svc" ]] || die "docker-compose.yml 里找不到 coder 服务"
+  [[ -n "$svc" ]] || die "cannot find coder service in docker-compose.yml"
   printf '%s\n' "$svc"
 }
 
+# ---------------------------------------------------------------------------
+# template-dir -- locate the active Coder template directory
+# ---------------------------------------------------------------------------
 template_dir() {
   local d
 
+  if [[ -n "${TEMPLATE_DIR:-}" && -f "$TEMPLATE_DIR/main.tf.json" ]]; then
+    printf '%s\n' "$TEMPLATE_DIR"
+    return
+  fi
   if [[ -n "${TEMPLATE_DIR:-}" && -f "$TEMPLATE_DIR/main.tf" ]]; then
     printf '%s\n' "$TEMPLATE_DIR"
     return
@@ -75,137 +90,25 @@ template_dir() {
     "$ROOT/templates/devbox" \
     "$ROOT/template/$TEMPLATE_NAME" \
     "$ROOT/devbox"; do
-    if [[ -f "$d/main.tf" ]]; then
+    if [[ -f "$d/main.tf.json" ]] || [[ -f "$d/main.tf" ]]; then
       printf '%s\n' "$d"
       return
     fi
   done
 
-  d="$(find "$ROOT" -type f -name main.tf -path '*/templates/*/main.tf' -printf '%h\n' 2>/dev/null | head -n1 || true)"
-  [[ -n "$d" ]] || d="$(find "$ROOT" -type f -name main.tf -printf '%h\n' 2>/dev/null | head -n1 || true)"
-  [[ -n "$d" ]] || die "找不到模板 main.tf。可设置 TEMPLATE_DIR=/path/to/template"
-  printf '%s\n' "$d"
+  d="$(find "$ROOT" -type f \( -name main.tf -o -name main.tf.json \) 2>/dev/null | head -n1 || true)"
+  [[ -n "$d" ]] || die "cannot find template directory. Set TEMPLATE_DIR."
+  dirname "$d"
 }
 
-dockerfile_path() {
-  local td df
-  td="$(template_dir)"
-
-  if [[ -f "$td/Dockerfile" ]]; then
-    printf '%s\n' "$td/Dockerfile"
-    return
-  fi
-
-  df="$(find "$td" "$ROOT" -type f -name Dockerfile 2>/dev/null | head -n1 || true)"
-  [[ -n "$df" ]] || die "找不到 devbox Dockerfile"
-  printf '%s\n' "$df"
-}
-
-backup_file() {
-  local src="$1" ts rel dst
-
-  [[ -f "$src" ]] || return 0
-  [[ "${CDEV_NO_BACKUP:-0}" == "1" ]] && return 0
-
-  ts="$(date +%F-%H%M%S)"
-
-  if [[ "$src" == "$ROOT/"* ]]; then
-    rel="${src#$ROOT/}"
-  else
-    rel="${src#/}"
-  fi
-
-  dst="$BACKUP_ROOT/$ts/$rel"
-  mkdir -p "$(dirname "$dst")"
-  cp -a "$src" "$dst"
-  log "backup: $src -> $dst"
-}
-
-install_if_changed() {
-  local tmp="$1" target="$2" mode="${3:-0644}"
-
-  if [[ -f "$target" ]] && cmp -s "$tmp" "$target"; then
-    rm -f "$tmp"
-    log "unchanged: $target"
-    return
-  fi
-
-  backup_file "$target"
-  install -m "$mode" "$tmp" "$target"
-  rm -f "$tmp"
-  log "updated: $target"
-}
-
-usage() {
-  cat <<'HELP'
-cdev - Coder CDE 管理工具
-
-常用：
-  cdev info
-  cdev doctor
-  cdev up
-  cdev ps
-  cdev logs [service]
-  cdev restart [service]
-
-运行时模板：
-  cdev patch-runtime          清理 main.tf、重写 startup.sh、创建插件目录
-  cdev clean-main-tf          只清理 main.tf，保留 startup.sh 作为唯一启动入口
-  cdev write-startup          只重写 startup.sh
-  cdev prepare-plugin-dirs    创建 extensions/vsix 分层目录
-  cdev check-runtime          检查 main.tf/startup.sh 是否有旧逻辑
-
-插件：
-  cdev reset-extension-state [container]
-  cdev list-extensions [container]
-
-Compose / Coder：
-  cdev compose <args...>
-  cdev up
-  cdev down
-  cdev ps
-  cdev logs [service]
-  cdev restart [service]
-  cdev patch-compose-urls
-  cdev set-token-lifetime [8760h]
-
-构建 / 模板：
-  cdev rebuild-devbox
-  cdev push-template
-  cdev terraform-init
-
-NGINX：
-  cdev patch-nginx-domain
-  cdev nginx-test
-  cdev nginx-reload
-
-诊断：
-  cdev check-urls
-  cdev local-health
-  cdev template-dir
-  cdev dockerfile
-  cdev admin-env
-  cdev backups
-  cdev install-self
-
-环境变量：
-  DOMAIN=code.549304.xyz
-  CODER_CDE_ROOT=/opt/coder-cde
-  TEMPLATE_DIR=/opt/coder-cde/templates/devbox
-  TEMPLATE_NAME=devbox
-  DEVBOX_IMAGE=coder-devbox:latest
-  CODER_SESSION_TOKEN=...
-  CODER_URL=https://code.549304.xyz
-  CDEV_NO_BACKUP=1
-HELP
-}
-
+# ---------------------------------------------------------------------------
+# info
+# ---------------------------------------------------------------------------
 cmd_info() {
   need_root_dir
 
-  local td df svc
+  local td svc
   td="$(template_dir 2>/dev/null || true)"
-  df="$(dockerfile_path 2>/dev/null || true)"
   svc="$(coder_service 2>/dev/null || true)"
 
   cat <<EOF
@@ -218,15 +121,46 @@ CODER_URL:           $CODER_URL
 Wildcard URL:        *.${DOMAIN}
 Template name:       $TEMPLATE_NAME
 Template dir:        ${td:-not found}
-Dockerfile:          ${df:-not found}
-Devbox image:        $DEVBOX_IMAGE
-Backup root:         $BACKUP_ROOT
+Lock dir:            $LOCK_DIR
 EOF
 }
 
-cmd_compose() { dc "$@"; }
-cmd_up() { dc up -d "$@"; }
-cmd_down() { dc down "$@"; }
+# ---------------------------------------------------------------------------
+# doctor
+# ---------------------------------------------------------------------------
+cmd_doctor() {
+  cmd_info || true
+  echo
+
+  log "docker compose services"
+  compose_services || true
+  echo
+
+  log "docker compose ps"
+  dc ps || true
+  echo
+
+  log "template check"
+  cmd_check_generated || true
+  echo
+
+  log "image tags check"
+  cmd_check_images || true
+  echo
+
+  log "local coder health"
+  curl -sv http://127.0.0.1:7080/ 2>&1 | tail -80 || true
+  echo
+
+  if have nginx; then
+    log "nginx test"
+    nginx -t || true
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# ps / logs / restart
+# ---------------------------------------------------------------------------
 cmd_ps() { dc ps "$@"; }
 
 cmd_logs() {
@@ -239,7 +173,7 @@ cmd_logs() {
     svc="$(coder_service)"
   fi
 
-  [[ -n "$svc" ]] || die "docker-compose.yml 里找不到 coder 服务"
+  [[ -n "$svc" ]] || die "cannot find coder service in docker-compose.yml"
   dc logs --tail="${TAIL:-200}" -f "$svc" "$@"
 }
 
@@ -251,619 +185,21 @@ cmd_restart() {
   fi
 }
 
-cmd_prepare_plugin_dirs() {
-  need_root
-  mkdir -p "$ROOT/extensions"
-  mkdir -p "$ROOT/vsix/core" "$ROOT/vsix/rust" "$ROOT/vsix/cpp" "$ROOT/vsix/go" "$ROOT/vsix/python" "$ROOT/vsix/full"
-  touch "$ROOT/extensions/core.txt" "$ROOT/extensions/rust.txt" "$ROOT/extensions/cpp.txt" "$ROOT/extensions/go.txt" "$ROOT/extensions/python.txt"
-  log "plugin dirs ready"
+# ---------------------------------------------------------------------------
+# template-dir
+# ---------------------------------------------------------------------------
+cmd_template_dir() {
+  template_dir
 }
 
-cmd_write_startup() {
-  need_root
-
-  local td target tmp
-  td="$(template_dir)"
-  target="$td/startup.sh"
-  tmp="$(mktemp)"
-
-  cat >"$tmp" <<'STARTUP_EOF'
-#!/usr/bin/env bash
-set -uo pipefail
-
-export PATH="$HOME/.local/bin:/usr/local/go/bin:/usr/local/cargo/bin:/home/coder/go/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
-
-mkdir -p \
-  "$HOME/workspace" \
-  "$HOME/.cache" \
-  "$HOME/.config/code-server" \
-  "$HOME/.local/share/code-server/User"
-
-profile="${DEV_PROFILE:-full}"
-ext_dir="/opt/cde/extensions"
-vsix_dir="/opt/cde/vsix"
-
-code_server_port="13337"
-code_server_url="http://127.0.0.1:${code_server_port}"
-pid_file="$HOME/.cache/code-server-${code_server_port}.pid"
-code_server_log="$HOME/.cache/code-server.log"
-
-settings="$HOME/.local/share/code-server/User/settings.json"
-
-if [[ ! -s "$settings" ]]; then
-  cat > "$settings" <<'JSON'
-{
-  "editor.formatOnSave": false,
-  "terminal.integrated.defaultProfile.linux": "bash",
-  "rust-analyzer.check.command": "clippy",
-  "clangd.arguments": ["--background-index", "--clang-tidy"],
-  "python.defaultInterpreterPath": "/usr/bin/python3",
-  "go.toolsManagement.autoUpdate": true,
-  "terminal.integrated.fontFamily": "Menlo, Monaco, 'Courier New', monospace",
-  "terminal.integrated.fontSize": 13,
-  "terminal.integrated.lineHeight": 1.1,
-  "terminal.integrated.letterSpacing": 0
-}
-JSON
-fi
-
-cat > "$HOME/.config/code-server/config.yaml" <<YAML
-bind-addr: 127.0.0.1:${code_server_port}
-auth: none
-cert: false
-YAML
-
-is_code_server_healthy() {
-  curl -fsS "${code_server_url}/healthz" >/dev/null 2>&1 || \
-  curl -fsS "${code_server_url}/" >/dev/null 2>&1
-}
-
-echo "[startup] DEV_PROFILE=${profile}"
-echo "[code-server] checking ${code_server_url}"
-
-if is_code_server_healthy; then
-  echo "[code-server] already running"
-else
-  if [[ -f "$pid_file" ]]; then
-    old_pid="$(cat "$pid_file" 2>/dev/null || true)"
-
-    if [[ -n "${old_pid:-}" ]] && kill -0 "$old_pid" 2>/dev/null; then
-      cmdline="$(tr '\0' ' ' < "/proc/${old_pid}/cmdline" 2>/dev/null || true)"
-
-      if [[ "$cmdline" == *"code-server"* ]]; then
-        echo "[code-server] stopping stale pid ${old_pid}"
-        kill "$old_pid" 2>/dev/null || true
-        sleep 1
-      fi
-    fi
-
-    rm -f "$pid_file"
-  fi
-
-  echo "[code-server] starting on 127.0.0.1:${code_server_port}"
-
-  if command -v setsid >/dev/null 2>&1; then
-    setsid code-server \
-      --auth none \
-      --bind-addr "127.0.0.1:${code_server_port}" \
-      "$HOME/workspace" \
-      > "$code_server_log" 2>&1 < /dev/null &
-  else
-    nohup code-server \
-      --auth none \
-      --bind-addr "127.0.0.1:${code_server_port}" \
-      "$HOME/workspace" \
-      > "$code_server_log" 2>&1 < /dev/null &
-  fi
-
-  echo "$!" > "$pid_file"
-fi
-
-for _ in $(seq 1 15); do
-  if is_code_server_healthy; then
-    echo "[code-server] ready"
-    break
-  fi
-
-  sleep 1
-done
-
-if ! is_code_server_healthy; then
-  echo "[code-server] not healthy yet; continuing without failing workspace startup"
-  tail -120 "$code_server_log" 2>/dev/null || true
-fi
-
-cat > "$HOME/.cache/cde-install-extensions.sh" <<'INSTALLER_EOF'
-#!/usr/bin/env bash
-set -uo pipefail
-
-export PATH="$HOME/.local/bin:/usr/local/go/bin:/usr/local/cargo/bin:/home/coder/go/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
-
-profile="${DEV_PROFILE:-full}"
-ext_dir="/opt/cde/extensions"
-vsix_dir="/opt/cde/vsix"
-
-mkdir -p "$HOME/.cache" "$HOME/.local/share/code-server/User"
-
-lists=("core.txt")
-case "$profile" in
-  core) ;;
-  rust) lists+=("rust.txt") ;;
-  cpp) lists+=("cpp.txt") ;;
-  go) lists+=("go.txt") ;;
-  python) lists+=("python.txt") ;;
-  full) lists+=("rust.txt" "cpp.txt" "go.txt" "python.txt") ;;
-  *)
-    echo "[extensions] unknown profile: ${profile}; using full"
-    lists+=("rust.txt" "cpp.txt" "go.txt" "python.txt")
-    ;;
-esac
-
-hash_vsix_dir() {
-  local dir="$1"
-
-  [[ -d "$dir" ]] || return 0
-  compgen -G "$dir/*.vsix" >/dev/null || return 0
-  sha256sum "$dir"/*.vsix 2>/dev/null || true
-}
-
-fingerprint() {
-  {
-    for f in "${lists[@]}"; do
-      [[ -f "${ext_dir}/${f}" ]] && cat "${ext_dir}/${f}"
-    done
-
-    # Legacy global VSIX location: /opt/cde/vsix/*.vsix
-    hash_vsix_dir "${vsix_dir}"
-
-    # Profile-aware VSIX locations.
-    hash_vsix_dir "${vsix_dir}/core"
-
-    case "$profile" in
-      full)
-        hash_vsix_dir "${vsix_dir}/rust"
-        hash_vsix_dir "${vsix_dir}/cpp"
-        hash_vsix_dir "${vsix_dir}/go"
-        hash_vsix_dir "${vsix_dir}/python"
-        hash_vsix_dir "${vsix_dir}/full"
-        ;;
-      rust) hash_vsix_dir "${vsix_dir}/rust" ;;
-      cpp) hash_vsix_dir "${vsix_dir}/cpp" ;;
-      go) hash_vsix_dir "${vsix_dir}/go" ;;
-      python) hash_vsix_dir "${vsix_dir}/python" ;;
-      core) ;;
-    esac
-  } | sha256sum | awk '{print $1}'
-}
-
-install_list() {
-  local list="$1"
-
-  [[ -f "$list" ]] || return 0
-
-  sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$list" | while read -r ext; do
-    [[ -n "$ext" ]] || continue
-    echo "[extensions] install ${ext}"
-    code-server --install-extension "$ext" --force || echo "[extensions] failed: ${ext}"
-  done
-}
-
-install_vsix_dir() {
-  local dir="$1"
-
-  [[ -d "$dir" ]] || return 0
-  compgen -G "$dir/*.vsix" >/dev/null || return 0
-
-  for vsix in "$dir"/*.vsix; do
-    echo "[extensions] install VSIX ${vsix}"
-    code-server --install-extension "$vsix" --force || echo "[extensions] failed VSIX: ${vsix}"
-  done
-}
-
-lockdir="$HOME/.cache/cde-extension-install.lock"
-if ! mkdir "$lockdir" 2>/dev/null; then
-  echo "[extensions] another installer is running; skip"
-  exit 0
-fi
-trap 'rmdir "$lockdir" 2>/dev/null || true' EXIT
-
-state_file="$HOME/.cache/cde-extension-${profile}.sha256"
-fp="$(fingerprint)"
-old=""
-[[ -f "$state_file" ]] && old="$(cat "$state_file" 2>/dev/null || true)"
-
-if [[ "$fp" == "$old" ]]; then
-  echo "[extensions] catalog unchanged; skip"
-  exit 0
-fi
-
-echo "[extensions] profile=${profile}; installing/updating extension catalog"
-
-for f in "${lists[@]}"; do
-  install_list "${ext_dir}/${f}"
-done
-
-install_vsix_dir "${vsix_dir}"
-install_vsix_dir "${vsix_dir}/core"
-
-case "$profile" in
-  full)
-    install_vsix_dir "${vsix_dir}/rust"
-    install_vsix_dir "${vsix_dir}/cpp"
-    install_vsix_dir "${vsix_dir}/go"
-    install_vsix_dir "${vsix_dir}/python"
-    install_vsix_dir "${vsix_dir}/full"
-    ;;
-  rust) install_vsix_dir "${vsix_dir}/rust" ;;
-  cpp) install_vsix_dir "${vsix_dir}/cpp" ;;
-  go) install_vsix_dir "${vsix_dir}/go" ;;
-  python) install_vsix_dir "${vsix_dir}/python" ;;
-  core) ;;
-esac
-
-echo "$fp" > "$state_file"
-echo "[extensions] done"
-exit 0
-INSTALLER_EOF
-
-chmod +x "$HOME/.cache/cde-install-extensions.sh"
-
-echo "[extensions] installer started in background"
-
-if command -v setsid >/dev/null 2>&1; then
-  setsid bash "$HOME/.cache/cde-install-extensions.sh" \
-    > "$HOME/.cache/cde-extension-install.log" 2>&1 < /dev/null &
-else
-  nohup bash "$HOME/.cache/cde-install-extensions.sh" \
-    > "$HOME/.cache/cde-extension-install.log" 2>&1 < /dev/null &
-fi
-
-exit 0
-STARTUP_EOF
-
-  install_if_changed "$tmp" "$target" 0755
-}
-
-cmd_clean_main_tf() {
-  need_root
-
-  local td target tmp
-  td="$(template_dir)"
-  target="$td/main.tf"
-  tmp="$(mktemp)"
-
-  [[ -f "$target" ]] || die "找不到 main.tf: $target"
-
-  python3 - "$target" "$tmp" <<'PY'
-from pathlib import Path
-import re
-import sys
-
-src = Path(sys.argv[1])
-dst = Path(sys.argv[2])
-s = src.read_text()
-
-def find_block_end(text: str, open_end: int, label: str) -> int:
-    pos = open_end
-    depth = 1
-    heredoc = None
-
-    while pos < len(text):
-        line_end = text.find("\n", pos)
-        if line_end == -1:
-            line_end = len(text)
-            next_pos = len(text)
-        else:
-            next_pos = line_end + 1
-
-        line = text[pos:line_end]
-
-        if heredoc:
-            if line.strip() == heredoc:
-                heredoc = None
-        else:
-            hm = re.search(r'<<-?\s*["\']?([A-Za-z0-9_]+)["\']?', line)
-            if hm:
-                heredoc = hm.group(1)
-            else:
-                depth += line.count("{")
-                depth -= line.count("}")
-
-        pos = next_pos
-
-        if depth <= 0:
-            return pos
-
-    raise SystemExit(f"failed to find end of block: {label}")
-
-def remove_resource(text: str, resource_type: str, resource_name: str) -> str:
-    pattern = re.compile(
-        rf'resource\s+"{re.escape(resource_type)}"\s+"{re.escape(resource_name)}"\s*\{{',
-        re.M,
-    )
-
-    while True:
-        m = pattern.search(text)
-        if not m:
-            return text
-
-        end = find_block_end(text, m.end(), f"{resource_type}.{resource_name}")
-        prefix = text[:m.start()].rstrip()
-        prefix = re.sub(r'\n# Added by cdev patch-code-server\.\s*$', '', prefix)
-        text = prefix.rstrip() + "\n\n" + text[end:].lstrip()
-
-def ensure_startup_script(text: str) -> str:
-    pattern = re.compile(r'resource\s+"coder_agent"\s+"main"\s*\{', re.M)
-    m = pattern.search(text)
-    if not m:
-        raise SystemExit("cannot insert startup_script: coder_agent.main not found")
-
-    end = find_block_end(text, m.end(), "coder_agent.main")
-    block = text[m.end():end]
-
-    if re.search(r'(?m)^\s*startup_script\s*=', block):
-        return text
-
-    line_start = text.rfind("\n", 0, m.start()) + 1
-    base_indent = re.match(r'\s*', text[line_start:m.start()]).group(0)
-    attr_indent = base_indent + "  "
-
-    insert_at = text.find("\n", m.end(), end)
-    if insert_at == -1:
-        raise SystemExit("cannot insert startup_script: malformed coder_agent.main block")
-    insert_at += 1
-
-    return (
-        text[:insert_at]
-        + f'{attr_indent}startup_script = file("${{path.module}}/startup.sh")\n'
-        + text[insert_at:]
-    )
-
-s = remove_resource(s, "coder_script", "code_server")
-s = remove_resource(s, "coder_script", "extensions")
-
-s = s.replace("http://localhost:13337", "http://127.0.0.1:13337")
-s = s.replace("localhost:13337", "127.0.0.1:13337")
-s = ensure_startup_script(s)
-
-s = re.sub(
-    r'(?m)^(\s*)option\s*\{\s*name\s*=\s*"([^"]+)"\s*value\s*=\s*"([^"]+)"\s*\}\s*$',
-    lambda m: f'{m.group(1)}option {{\n{m.group(1)}  name  = "{m.group(2)}"\n{m.group(1)}  value = "{m.group(3)}"\n{m.group(1)}}}',
-    s,
-)
-
-dst.write_text(s.rstrip() + "\n")
-PY
-
-  install_if_changed "$tmp" "$target" 0644
-}
-
-cmd_patch_runtime() {
-  cmd_clean_main_tf
-  cmd_write_startup
-  cmd_prepare_plugin_dirs
-  cmd_check_runtime || true
-}
-
-cmd_patch_compose_urls() {
-  need_root
-  need_compose
-
-  local tmp
-  tmp="$(mktemp)"
-
-  python3 - "$COMPOSE_FILE" "$DOMAIN" "$tmp" <<'PY'
-from pathlib import Path
-import re
-import sys
-
-src = Path(sys.argv[1])
-domain = sys.argv[2]
-dst = Path(sys.argv[3])
-
-access = f"https://{domain}"
-wildcard = f"*.{domain}"
-
-text = src.read_text()
-text = text.replace("https://*.code.549304.xyz", "*.code.549304.xyz")
-text = text.replace("https://*.code.example.com", "*.code.example.com")
-text = text.replace("https://code.example.com", access)
-text = text.replace("code.example.com", domain)
-text = re.sub(r'https://\*\.' + re.escape(domain), '*.' + domain, text)
-
-text = re.sub(
-    r'^(\s*-\s*)CODER_ACCESS_URL=.*$',
-    lambda m: f'{m.group(1)}CODER_ACCESS_URL={access}',
-    text,
-    flags=re.M,
-)
-text = re.sub(
-    r'^(\s*)CODER_ACCESS_URL\s*:.*$',
-    lambda m: f'{m.group(1)}CODER_ACCESS_URL: "{access}"',
-    text,
-    flags=re.M,
-)
-text = re.sub(
-    r'^(\s*-\s*)CODER_WILDCARD_ACCESS_URL=.*$',
-    lambda m: f'{m.group(1)}CODER_WILDCARD_ACCESS_URL={wildcard}',
-    text,
-    flags=re.M,
-)
-text = re.sub(
-    r'^(\s*)CODER_WILDCARD_ACCESS_URL\s*:.*$',
-    lambda m: f'{m.group(1)}CODER_WILDCARD_ACCESS_URL: "{wildcard}"',
-    text,
-    flags=re.M,
-)
-
-dst.write_text(text)
-PY
-
-  install_if_changed "$tmp" "$COMPOSE_FILE" 0644
-}
-
-cmd_set_token_lifetime() {
-  need_root
-  need_compose
-
-  local lifetime="${1:-8760h}" tmp svc
-  [[ "$lifetime" =~ ^[0-9]+h$ ]] || die "格式应为小时，例如 8760h 或 87600h"
-
-  svc="$(coder_service)"
-  tmp="$(mktemp)"
-
-  python3 - "$COMPOSE_FILE" "$lifetime" "$svc" "$tmp" <<'PY'
-from pathlib import Path
-import re
-import sys
-
-src = Path(sys.argv[1])
-lifetime = sys.argv[2]
-service_name = sys.argv[3]
-dst = Path(sys.argv[4])
-
-text = src.read_text()
-updates = {
-    "CODER_MAX_TOKEN_LIFETIME": lifetime,
-    "CODER_MAX_ADMIN_TOKEN_LIFETIME": lifetime,
-    "CODER_DEFAULT_TOKEN_LIFETIME": lifetime,
-}
-
-lines = text.splitlines(True)
-
-coder_i = None
-coder_indent = None
-for i, line in enumerate(lines):
-    m = re.match(rf'^(\s*){re.escape(service_name)}:\s*(?:#.*)?$', line)
-    if m:
-        coder_i = i
-        coder_indent = len(m.group(1))
-        break
-
-if coder_i is None:
-    raise SystemExit(f"cannot find {service_name} service")
-
-end_i = len(lines)
-for i in range(coder_i + 1, len(lines)):
-    line = lines[i]
-    if line.strip() and not line.lstrip().startswith("#"):
-        indent = len(line) - len(line.lstrip())
-        if indent <= coder_indent:
-            end_i = i
-            break
-
-env_i = None
-env_indent = None
-for i in range(coder_i + 1, end_i):
-    m = re.match(r'^(\s*)environment:\s*$', lines[i])
-    if m:
-        env_i = i
-        env_indent = len(m.group(1))
-        break
-
-if env_i is None:
-    base = " " * (coder_indent + 2)
-    child = " " * (coder_indent + 4)
-    block = [f"{base}environment:\n"]
-    for key, value in updates.items():
-        block.append(f'{child}{key}: "{value}"\n')
-    lines[coder_i + 1:coder_i + 1] = block
-else:
-    env_end = end_i
-    for i in range(env_i + 1, end_i):
-        line = lines[i]
-        if line.strip() and not line.lstrip().startswith("#"):
-            indent = len(line) - len(line.lstrip())
-            if indent <= env_indent:
-                env_end = i
-                break
-
-    style = "mapping"
-    for line in lines[env_i + 1:env_end]:
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        if stripped.startswith("- "):
-            style = "list"
-        break
-
-    cur_end = env_end
-    child = " " * (env_indent + 2)
-
-    for key, value in updates.items():
-        found = False
-        for idx in range(env_i + 1, cur_end):
-            if style == "list" and re.match(rf'^\s*-\s*{re.escape(key)}=', lines[idx]):
-                lines[idx] = re.sub(
-                    rf'^(\s*-\s*){re.escape(key)}=.*$',
-                    lambda m: f'{m.group(1)}{key}={value}\n',
-                    lines[idx],
-                )
-                found = True
-            elif style == "mapping" and re.match(rf'^\s*{re.escape(key)}\s*:', lines[idx]):
-                indent = re.match(r'^(\s*)', lines[idx]).group(1)
-                lines[idx] = f'{indent}{key}: "{value}"\n'
-                found = True
-
-        if not found:
-            if style == "list":
-                lines.insert(cur_end, f"{child}- {key}={value}\n")
-            else:
-                lines.insert(cur_end, f'{child}{key}: "{value}"\n')
-            cur_end += 1
-
-dst.write_text("".join(lines))
-PY
-
-  install_if_changed "$tmp" "$COMPOSE_FILE" 0644
-  log "token lifetime set to $lifetime; run: cdev restart $svc"
-}
-
-cmd_patch_nginx_domain() {
-  need_root
-
-  local files=()
-  [[ -f /etc/nginx/sites-available/coder-cde.conf ]] && files+=("/etc/nginx/sites-available/coder-cde.conf")
-  [[ -f /etc/nginx/sites-enabled/coder-cde.conf ]] && files+=("/etc/nginx/sites-enabled/coder-cde.conf")
-
-  if [[ "${#files[@]}" -eq 0 ]]; then
-    warn "未找到 coder-cde nginx site，跳过"
-    return 0
-  fi
-
-  local f tmp
-  for f in "${files[@]}"; do
-    tmp="$(mktemp)"
-    sed \
-      -e "s#code\.example\.com#${DOMAIN}#g" \
-      -e "s#https://\*\.${DOMAIN}#*.${DOMAIN}#g" \
-      "$f" >"$tmp"
-    install_if_changed "$tmp" "$f" 0644
-  done
-
-  log "nginx domain patched; run: cdev nginx-test && cdev nginx-reload"
-}
-
-cmd_rebuild_devbox() {
-  local df dir
-  df="$(dockerfile_path)"
-  dir="$(dirname "$df")"
-  log "build image: $DEVBOX_IMAGE from $dir"
-  docker build --pull -t "$DEVBOX_IMAGE" "$dir"
-}
-
-cmd_terraform_init() {
-  local td
-  td="$(template_dir)"
-  have terraform || die "宿主机没有 terraform。可以跳过；Coder push 时会 init。"
-  (cd "$td" && terraform init)
-}
-
+# ---------------------------------------------------------------------------
+# push-template
+# ---------------------------------------------------------------------------
 cmd_push_template() {
-  local td svc tmp remote_dir rc
+  local td svc rc
   td="$(template_dir)"
 
-  [[ -n "${CODER_SESSION_TOKEN:-}" ]] || die "缺少 CODER_SESSION_TOKEN。用法：CODER_SESSION_TOKEN='...' cdev push-template"
+  [[ -n "${CODER_SESSION_TOKEN:-}" ]] || die "CODER_SESSION_TOKEN is required.  Run: CODER_SESSION_TOKEN='...' cdev push-template"
 
   log "push template: name=$TEMPLATE_NAME dir=$td url=$CODER_URL"
 
@@ -879,6 +215,7 @@ cmd_push_template() {
   svc="$(coder_service)"
   log "host coder CLI not found; using Docker Compose service '$svc' as CLI runner"
 
+  local tmp remote_dir
   tmp="$(mktemp -d)"
   remote_dir="/tmp/cdev-template-${TEMPLATE_NAME}-$(date +%s)-$$"
 
@@ -901,211 +238,241 @@ cmd_push_template() {
   return "$rc"
 }
 
-cmd_check_runtime() {
-  need_root_dir
+# ---------------------------------------------------------------------------
+# check-generated -- validate a generated template tree
+# ---------------------------------------------------------------------------
+cmd_check_generated() {
+  local td="$1"
+  if [[ -z "$td" ]]; then
+    td="$(template_dir 2>/dev/null || true)"
+  fi
+  [[ -n "$td" ]] || die "no template directory; pass one as argument"
 
-  local td tf sh bad=0
-  td="$(template_dir)"
-  tf="$td/main.tf"
-  sh="$td/startup.sh"
+  local errors=0
 
-  log "checking runtime files"
-
-  [[ -f "$tf" ]] || {
-    err "missing $tf"
-    return 1
-  }
-  [[ -f "$sh" ]] || {
-    err "missing $sh"
-    return 1
-  }
-
-  if ! grep -q 'startup_script = file("${path.module}/startup.sh")' "$tf"; then
-    err "main.tf 没有 startup_script = file(...startup.sh)"
-    bad=1
+  # Must have a main.tf.json or main.tf
+  if [[ ! -f "$td/main.tf.json" ]] && [[ ! -f "$td/main.tf" ]]; then
+    err "missing main.tf.json (or main.tf) in $td"
+    errors=$((errors + 1))
   fi
 
-  if grep -nE 'resource "coder_script" "(code_server|extensions)"' "$tf"; then
-    err "main.tf 仍有额外 coder_script，会和 startup.sh 打架"
-    bad=1
+  # Must have startup.sh
+  if [[ ! -f "$td/startup.sh" ]]; then
+    err "missing startup.sh in $td"
+    errors=$((errors + 1))
   fi
 
-  if grep -nE 'http://localhost:13337|localhost:13337' "$tf"; then
-    err "main.tf 仍有 localhost:13337，建议用 127.0.0.1"
-    bad=1
+  # Must have runtime directory
+  if [[ ! -d "$td/runtime" ]]; then
+    err "missing runtime/ directory in $td"
+    errors=$((errors + 1))
   fi
 
-  if grep -nE "pkill -f ['\"]?code-server|CDEV_CODE_SERVER_LAUNCH|/tmp/code-server.log" "$tf" "$sh"; then
-    err "发现旧的/危险 code-server 启动逻辑"
-    bad=1
-  fi
-
-  if ! grep -q 'cde-install-extensions.sh' "$sh"; then
-    err "startup.sh 里没有后台插件安装脚本"
-    bad=1
-  fi
-
-  if ! grep -q 'exit 0' "$sh"; then
-    err "startup.sh 应显式 exit 0，避免 workspace START_ERROR"
-    bad=1
-  fi
-
-  if [[ "$bad" -eq 0 ]]; then
-    log "runtime check OK"
-  fi
-
-  return "$bad"
-}
-
-cmd_check_urls() {
-  need_root_dir
-
-  local paths=("$ROOT")
-  [[ -e /usr/local/bin/cdev ]] && paths+=("/usr/local/bin/cdev")
-  [[ -d /etc/nginx ]] && paths+=("/etc/nginx")
-
-  log "checking bad URLs under ${paths[*]}"
-
-  if grep -RInE \
-    --exclude='*.bak*' \
-    --exclude-dir='.git' \
-    --exclude-dir='backups' \
-    'https://\*\.|code\.example\.com|go\\1\.26\.3' \
-    "${paths[@]}"; then
-    warn "上面仍有错误/旧配置"
-    return 1
-  else
-    local rc=$?
-    if [[ "$rc" -eq 1 ]]; then
-      log "未发现 https://*. / code.example.com / go\\1.26.3"
-      return 0
+  # Check for forbidden patterns in main.tf.json
+  if [[ -f "$td/main.tf.json" ]]; then
+    if grep -q 'prevent_destroy' "$td/main.tf.json" 2>/dev/null; then
+      err "main.tf.json contains prevent_destroy (forbidden)"
+      errors=$((errors + 1))
     fi
-
-    err "grep 扫描失败，退出码：$rc"
-    return "$rc"
-  fi
-}
-
-cmd_local_health() {
-  curl -sv http://127.0.0.1:7080/ 2>&1 | tail -80 || true
-}
-
-cmd_nginx_test() {
-  nginx -t
-}
-
-cmd_nginx_reload() {
-  need_root
-  nginx -t
-  systemctl reload nginx
-}
-
-cmd_doctor() {
-  cmd_info || true
-  echo
-
-  log "docker compose services"
-  compose_services || true
-  echo
-
-  log "docker compose ps"
-  dc ps || true
-  echo
-
-  log "runtime check"
-  cmd_check_runtime || true
-  echo
-
-  log "bad URL scan"
-  cmd_check_urls || true
-  echo
-
-  log "local coder health"
-  cmd_local_health || true
-  echo
-
-  if have nginx; then
-    log "nginx test"
-    nginx -t || true
-  fi
-}
-
-workspace_container() {
-  local requested="${1:-}" names
-
-  names="$(docker ps --format '{{.Names}}')" || return 1
-
-  if [[ -n "$requested" ]]; then
-    printf '%s\n' "$names" | grep -x "$requested" | head -n1 || true
-    return 0
+    if grep -q '/var/run/docker.sock' "$td/main.tf.json" 2>/dev/null; then
+      err "main.tf.json mounts docker socket (forbidden)"
+      errors=$((errors + 1))
+    fi
   fi
 
-  printf '%s\n' "$names" |
-    grep -E '^coder-' |
-    grep -vE '^coder-cde-(coder|database)-' |
-    head -n1 || true
+  if [[ "$errors" -gt 0 ]]; then
+    err "check-generated: $errors error(s) found"
+    return 1
+  fi
 
+  log "check-generated: OK ($td)"
   return 0
 }
 
-cmd_reset_extension_state() {
-  local c
+# ---------------------------------------------------------------------------
+# check-images -- verify images referenced in the template exist in GHCR
+# ---------------------------------------------------------------------------
+cmd_check_images() {
+  local td images_json
+  td="${1:-$(template_dir 2>/dev/null || true)}"
+  [[ -n "$td" ]] || die "no template directory"
 
-  if ! c="$(workspace_container "${1:-}")"; then
-    die "docker ps 失败，请确认 Docker 正常运行。"
+  images_json="$td/images.json"
+  if [[ ! -f "$images_json" ]]; then
+    # Try generated/catalog path
+    local cat_dir
+    for cat_dir in "$td/../catalog" "$td/../../catalog" "$ROOT/generated/catalog"; do
+      if [[ -f "$cat_dir/images.json" ]]; then
+        images_json="$cat_dir/images.json"
+        break
+      fi
+    done
   fi
 
-  [[ -n "$c" ]] || die "找不到 workspace 容器；可传容器名"
-  docker exec -u coder "$c" bash -lc 'rm -f ~/.cache/cde-extension-*.sha256; rm -rf ~/.cache/cde-extension-install.lock'
-  log "extension state reset in $c"
-}
-
-cmd_list_extensions() {
-  local c
-
-  if ! c="$(workspace_container "${1:-}")"; then
-    die "docker ps 失败，请确认 Docker 正常运行。"
+  if [[ ! -f "$images_json" ]]; then
+    warn "images.json not found; skipping image check"
+    return 0
   fi
 
-  [[ -n "$c" ]] || die "找不到 workspace 容器；可传容器名"
-  docker exec -u coder "$c" bash -lc 'code-server --list-extensions --show-versions'
-}
+  log "checking images from $images_json"
 
-cmd_template_dir() {
-  template_dir
-}
+  local image errors=0
+  # Extract image references from the images.json
+  while IFS= read -r image; do
+    if [[ -z "$image" ]]; then continue; fi
+    if have docker && docker buildx imagetools inspect "$image" >/dev/null 2>&1; then
+      log "  found: $image"
+    else
+      err "  missing: $image"
+      errors=$((errors + 1))
+    fi
+  done < <(python3 -c "
+import json, sys
+data = json.load(open('$images_json'))
+for img in data.get('images', []):
+    print(img.get('image', ''))
+" 2>/dev/null || true)
 
-cmd_dockerfile() {
-  dockerfile_path
-}
-
-cmd_admin_env() {
-  local f="$ROOT/admin.env"
-
-  if [[ ! -f "$f" ]]; then
-    warn "找不到 $f"
+  if [[ "$errors" -gt 0 ]]; then
+    warn "check-images: $errors image(s) not found in registry"
     return 1
   fi
-
-  echo "admin.env: $f"
-  echo "不要把密码贴到聊天或日志。可执行：sudo cat $f"
-  grep -E 'ADMIN_USERNAME|ADMIN_EMAIL' "$f" || true
+  log "check-images: all images present"
+  return 0
 }
 
-cmd_backups() {
-  if [[ -d "$BACKUP_ROOT" ]]; then
-    find "$BACKUP_ROOT" -type f | sort | tail -100
-  else
-    warn "没有备份目录：$BACKUP_ROOT"
+# ---------------------------------------------------------------------------
+# sync-generated -- atomically update the template directory from generated
+# ---------------------------------------------------------------------------
+cmd_sync_generated() {
+  need_root
+  local generated_dir="$1"
+
+  if [[ -z "$generated_dir" ]]; then
+    generated_dir="$ROOT/generated"
   fi
+  [[ -d "$generated_dir" ]] || die "generated directory not found: $generated_dir"
+
+  local templates_subdir="$generated_dir/templates/$TEMPLATE_NAME"
+  if [[ ! -d "$templates_subdir" ]]; then
+    templates_subdir="$generated_dir/templates/devbox"
+  fi
+  [[ -d "$templates_subdir" ]] || die "template subdirectory not found under $generated_dir"
+
+  local target_dir staging_dir
+  target_dir="$(template_dir)"
+  staging_dir="$(mktemp -d)"
+
+  log "sync-generated: source=$templates_subdir target=$target_dir"
+
+  # Acquire lock and perform atomic switch
+  mkdir -p "$LOCK_DIR"
+
+  (
+    exec 9>"$LOCK_DIR/sync-generated.lock"
+    if ! flock -n 9; then
+      die "another sync-generated is already running"
+    fi
+
+    # Copy generated template into staging
+    cp -a "$templates_subdir"/. "$staging_dir"/
+
+    # Validate the staging copy
+    if ! cmd_check_generated "$staging_dir"; then
+      err "staging validation failed; aborting sync"
+      rm -rf "$staging_dir"
+      exit 1
+    fi
+
+    # Also validate image references if images.json exists
+    if [[ -f "$generated_dir/catalog/images.json" ]]; then
+      cp "$generated_dir/catalog/images.json" "$staging_dir/images.json" 2>/dev/null || true
+    fi
+
+    # Atomic switch: move old aside, move new in
+    local old_dir="${target_dir}.prev.$(date +%s)"
+    if [[ -d "$target_dir" ]]; then
+      mv "$target_dir" "$old_dir"
+    fi
+
+    mv "$staging_dir" "$target_dir"
+
+    # Clean up old directory
+    if [[ -d "$old_dir" ]]; then
+      /bin/rm -rf "$old_dir"
+    fi
+  )
+
+  log "sync-generated: complete"
 }
 
+# ---------------------------------------------------------------------------
+# list-workspace-volumes -- list Docker volumes with Coder labels (read-only)
+# ---------------------------------------------------------------------------
+cmd_list_workspace_volumes() {
+  log "listing Docker volumes with Coder workspace labels"
+
+  docker volume ls --format '{{.Name}}' 2>/dev/null | while read -r vol; do
+    local labels
+    labels="$(docker volume inspect "$vol" --format '{{json .Labels}}' 2>/dev/null || true)"
+    if [[ -n "$labels" && "$labels" != "null" ]] && echo "$labels" | grep -q 'coder.workspace_id'; then
+      local ws_id owner
+      ws_id="$(echo "$labels" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('coder.workspace_id','?'))" 2>/dev/null || echo '?')"
+      owner="$(echo "$labels" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('coder.owner','?'))" 2>/dev/null || echo '?')"
+      printf '  %-50s  ws=%-36s  owner=%s\n' "$vol" "$ws_id" "$owner"
+    fi
+  done
+
+  echo
+  warn "Volumes above are managed by Coder.  Do NOT delete them manually."
+  warn "Normal Coder workspace deletion removes the volume automatically."
+}
+
+# ---------------------------------------------------------------------------
+# install-self
+# ---------------------------------------------------------------------------
 cmd_install_self() {
   need_root
   install -m 0755 "$0" /usr/local/bin/cdev
   log "installed to /usr/local/bin/cdev"
 }
 
+# ---------------------------------------------------------------------------
+# usage
+# ---------------------------------------------------------------------------
+usage() {
+  cat <<'HELP'
+cdev - thin VPS helper for CoderVPS
+
+  cdev info                        show configuration summary
+  cdev doctor                      full health check
+  cdev ps                          show Docker Compose services
+  cdev logs [service]              tail logs (default: coder service)
+  cdev restart [service]           restart services
+
+  cdev template-dir                print active template directory path
+  cdev push-template               push template to Coder (requires CODER_SESSION_TOKEN)
+
+  cdev sync-generated <dir>        atomically sync generated template tree to active dir
+  cdev check-generated [dir]       validate a generated template tree
+  cdev check-images [dir]          verify template images exist in GHCR
+
+  cdev list-workspace-volumes      list Coder-managed workspace volumes (never deletes)
+  cdev install-self                install cdev to /usr/local/bin
+
+Environment:
+  DOMAIN=code.549304.xyz
+  CODER_CDE_ROOT=/opt/coder-cde
+  TEMPLATE_DIR=/opt/coder-cde/templates/devbox
+  TEMPLATE_NAME=devbox
+  CODER_SESSION_TOKEN=...
+  CODER_URL=https://code.549304.xyz
+HELP
+}
+
+# ---------------------------------------------------------------------------
+# dispatch
+# ---------------------------------------------------------------------------
 main() {
   local cmd="${1:-help}"
   shift || true
@@ -1116,47 +483,22 @@ main() {
   info) cmd_info "$@" ;;
   doctor) cmd_doctor "$@" ;;
 
-  compose) cmd_compose "$@" ;;
-  up) cmd_up "$@" ;;
-  down) cmd_down "$@" ;;
   ps) cmd_ps "$@" ;;
   logs) cmd_logs "$@" ;;
   restart) cmd_restart "$@" ;;
 
-  patch | patch-runtime) cmd_patch_runtime "$@" ;;
-  clean-main-tf) cmd_clean_main_tf "$@" ;;
-  write-startup) cmd_write_startup "$@" ;;
-  prepare-plugin-dirs) cmd_prepare_plugin_dirs "$@" ;;
-  check-runtime) cmd_check_runtime "$@" ;;
-
-  patch-compose-urls) cmd_patch_compose_urls "$@" ;;
-  set-token-lifetime) cmd_set_token_lifetime "$@" ;;
-
-  patch-nginx | patch-nginx-domain) cmd_patch_nginx_domain "$@" ;;
-  nginx-test) cmd_nginx_test "$@" ;;
-  nginx-reload) cmd_nginx_reload "$@" ;;
-
-  rebuild-devbox | build-devbox) cmd_rebuild_devbox "$@" ;;
-  terraform-init) cmd_terraform_init "$@" ;;
+  template-dir) cmd_template_dir "$@" ;;
   push-template) cmd_push_template "$@" ;;
 
-  reset-extension-state) cmd_reset_extension_state "$@" ;;
-  list-extensions) cmd_list_extensions "$@" ;;
+  sync-generated) cmd_sync_generated "$@" ;;
+  check-generated) cmd_check_generated "$@" ;;
+  check-images) cmd_check_images "$@" ;;
 
-  check-urls) cmd_check_urls "$@" ;;
-  local-health) cmd_local_health "$@" ;;
-  template-dir) cmd_template_dir "$@" ;;
-  dockerfile) cmd_dockerfile "$@" ;;
-  admin-env) cmd_admin_env "$@" ;;
-  backups) cmd_backups "$@" ;;
+  list-workspace-volumes) cmd_list_workspace_volumes "$@" ;;
   install-self) cmd_install_self "$@" ;;
 
-  patch-code-server | patch-dockerfile | patch-template | patch-main-tf)
-    die "这个旧命令在 v9 已禁用，避免污染文件。请用：cdev patch-runtime"
-    ;;
-
   *)
-    err "未知命令：$cmd"
+    err "unknown command: $cmd"
     usage
     exit 2
     ;;

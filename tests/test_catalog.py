@@ -233,8 +233,8 @@ def test_refresh_catalog_without_override_defaults():
         cpp_default_tools=cfg.cpp_default_tools,
     )
     catalog = refresh_catalog(cfg_empty, fixture_dir=Path("tests/fixtures"))
-    assert catalog["tools"]["uv"]["version"] == "auto"
-    assert catalog["tools"]["sccache"]["version"] == "auto"
+    assert catalog["tools"]["uv"]["version"] == ""
+    assert catalog["tools"]["sccache"]["version"] == ""
 
 
 def test_refresh_catalog_schema_version_is_int():
