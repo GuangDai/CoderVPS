@@ -341,47 +341,121 @@ def _startup_script_hcl() -> str:
     code_server_log="/tmp/code-server.log"
     code_server_extensions_dir="$HOME/.local/share/code-server/extensions"
 
+    selected_languages() {{
+      node -e 'const raw = process.env.CDEV_SELECTION_JSON || "{{}}"; const j = JSON.parse(raw); for (const x of (j.languages || [])) console.log(x);'
+    }}
+
+    selected_extension_packs() {{
+      node -e 'const raw = process.env.CDEV_SELECTION_JSON || "{{}}"; const j = JSON.parse(raw); for (const x of (j.extra_extension_packs || [])) console.log(x);'
+    }}
+
+    selected_extension_manifests() {{
+      # Always install the base editor extensions.
+      printf '%s\\n' "/opt/cde/extensions/core.txt"
+
+      # Install only selected language manifests: python/go/rust/cpp.
+      while IFS= read -r language; do
+        [ -n "$language" ] || continue
+        printf '%s\\n' "/opt/cde/extensions/$language.txt"
+      done < <(selected_languages)
+
+      # Install only explicitly selected extension packs, e.g. leetcode.
+      while IFS= read -r pack; do
+        [ -n "$pack" ] || continue
+        printf '%s\\n' "/opt/cde/extensions/packs/$pack.txt"
+      done < <(selected_extension_packs)
+    }}
+
+    find_local_vsix_for_extension_id() {{
+      extension_id="$1"
+
+      find /opt/cde/vsix -type f \\
+        \\( -iname "$extension_id-*.vsix" -o -iname "$extension_id.vsix" \\) \\
+        2>/dev/null | sort -V | tail -n 1
+    }}
+
+    install_one_code_server_extension() {{
+      extension_spec="$1"
+      extension_spec="$(printf '%s' "$extension_spec" | sed 's/#.*$//' | xargs)"
+
+      [ -n "$extension_spec" ] || return 0
+
+      # Allow manifest lines to point directly to a VSIX path.
+      if [ -f "$extension_spec" ]; then
+        log "Installing VSIX path: $extension_spec"
+        code-server \\
+          --extensions-dir "$code_server_extensions_dir" \\
+          --install-extension "$extension_spec" \\
+          --force || {{
+            log "Failed to install VSIX path: $extension_spec"
+          }}
+        return 0
+      fi
+
+      # Allow relative VSIX filename under /opt/cde/vsix.
+      if [ -f "/opt/cde/vsix/$extension_spec" ]; then
+        log "Installing VSIX file: /opt/cde/vsix/$extension_spec"
+        code-server \\
+          --extensions-dir "$code_server_extensions_dir" \\
+          --install-extension "/opt/cde/vsix/$extension_spec" \\
+          --force || {{
+            log "Failed to install VSIX file: /opt/cde/vsix/$extension_spec"
+          }}
+        return 0
+      fi
+
+      # Otherwise treat it as a Marketplace/OpenVSX extension ID.
+      extension_id="$extension_spec"
+
+      if code-server \\
+        --extensions-dir "$code_server_extensions_dir" \\
+        --list-extensions 2>/dev/null | grep -Fxq "$extension_id"; then
+        log "Extension already installed: $extension_id"
+        return 0
+      fi
+
+      local_vsix="$(find_local_vsix_for_extension_id "$extension_id" || true)"
+
+      if [ -n "$local_vsix" ] && [ -f "$local_vsix" ]; then
+        log "Installing extension ID from local VSIX: $extension_id -> $local_vsix"
+        code-server \\
+          --extensions-dir "$code_server_extensions_dir" \\
+          --install-extension "$local_vsix" \\
+          --force || {{
+            log "Failed to install local VSIX for extension ID: $extension_id"
+          }}
+      else
+        log "Installing extension ID from registry: $extension_id"
+        code-server \\
+          --extensions-dir "$code_server_extensions_dir" \\
+          --install-extension "$extension_id" \\
+          --force || {{
+            log "Failed to install extension ID: $extension_id"
+          }}
+      fi
+    }}
+
     install_code_server_extensions() {{
-      log "Installing code-server extensions"
+      log "Installing selected code-server extensions"
 
       mkdir -p "$code_server_extensions_dir"
 
-      log "Installing VSIX files from /opt/cde/vsix"
-
-      while IFS= read -r vsix_file; do
-        [ -f "$vsix_file" ] || continue
-
-        log "Installing VSIX: $vsix_file"
-
-        code-server \\
-          --extensions-dir "$code_server_extensions_dir" \\
-          --install-extension "$vsix_file" \\
-          --force || {{
-            log "Failed to install VSIX: $vsix_file"
-          }}
-      done < <(find /opt/cde/vsix -type f -name "*.vsix" 2>/dev/null | sort)
-
-      log "Installing extension IDs from /opt/cde/extensions/*.txt"
+      log "CDEV_SELECTION_JSON=$CDEV_SELECTION_JSON"
 
       while IFS= read -r manifest_file; do
-        [ -f "$manifest_file" ] || continue
+        [ -n "$manifest_file" ] || continue
+
+        if [ ! -f "$manifest_file" ]; then
+          log "Extension manifest not found, skipping: $manifest_file"
+          continue
+        fi
 
         log "Reading extension manifest: $manifest_file"
 
-        while IFS= read -r extension_id || [ -n "$extension_id" ]; do
-          extension_id="$(printf '%s' "$extension_id" | sed 's/#.*$//' | xargs)"
-          [ -n "$extension_id" ] || continue
-
-          log "Installing extension ID: $extension_id"
-
-          code-server \\
-            --extensions-dir "$code_server_extensions_dir" \\
-            --install-extension "$extension_id" \\
-            --force || {{
-              log "Failed to install extension ID: $extension_id"
-            }}
+        while IFS= read -r extension_spec || [ -n "$extension_spec" ]; do
+          install_one_code_server_extension "$extension_spec"
         done < "$manifest_file"
-      done < <(find /opt/cde/extensions -type f -name "*.txt" 2>/dev/null | sort)
+      done < <(selected_extension_manifests | awk '!seen[$0]++')
 
       log "Installed extensions:"
       code-server \\
@@ -487,7 +561,6 @@ def _startup_script_hcl() -> str:
     tail -n 200 "$code_server_log" >&2 || true
     exit 1
   EOT"""
-
 
 
 def _render_enable_locals(catalog: dict) -> str:
