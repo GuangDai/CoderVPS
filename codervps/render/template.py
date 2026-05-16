@@ -337,14 +337,41 @@ def _startup_script_hcl() -> str:
     if command -v code-server >/dev/null 2>&1; then
       log "Starting code-server"
       code-server --version || true
-      pkill -f 'code-server.*13337' >/dev/null 2>&1 || true
-      nohup code-server \\
-        --auth none \\
-        --disable-telemetry \\
-        --disable-update-check \\
-        --bind-addr 0.0.0.0:13337 \\
-        "{PROJECT_DIR}" \\
-        > /tmp/code-server.log 2>&1 &
+
+      code_server_pid="/tmp/code-server.pid"
+      code_server_log="/tmp/code-server.log"
+
+      if [ -s "$code_server_pid" ]; then
+        old_pid="$(cat "$code_server_pid" 2>/dev/null || true)"
+        if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
+            kill "$old_pid" 2>/dev/null || true
+            sleep 1
+        fi
+      fi
+
+      rm -f "$code_server_pid"
+
+      if command -v setsid >/dev/null 2>&1; then
+        setsid code-server \
+            --auth none \
+            --disable-telemetry \
+            --disable-update-check \
+            --bind-addr 127.0.0.1:13337 \
+            "/home/coder/workspace" \
+            > "$code_server_log" 2>&1 < /dev/null &
+      else
+        nohup code-server \
+            --auth none \
+            --disable-telemetry \
+            --disable-update-check \
+            --bind-addr 127.0.0.1:13337 \
+            "/home/coder/workspace" \
+            > "$code_server_log" 2>&1 < /dev/null &
+      fi
+
+      echo "$!" > "$code_server_pid"
+
+
       for _ in $(seq 1 60); do
         if curl -fsS http://0.0.0.0:13337/healthz >/dev/null 2>&1; then
           log "code-server is healthy"
