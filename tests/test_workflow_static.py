@@ -73,6 +73,7 @@ def test_workflow_build_args_match_matrix_keys():
         "UV_VERSION",
         "CODE_SERVER_VERSION",
         "SCCACHE_VERSION",
+        "SCCACHE_ASSET",
         "SCCACHE_SHA256",
         "LLVM_VERSION",
     ]

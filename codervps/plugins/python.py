@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from pathlib import Path
+
+from codervps.discovery import python_versions
 from codervps.models import ParameterSpec, PluginCatalog, RuntimeAction, RuntimePlan, VersionEntry
 
 
@@ -8,16 +11,18 @@ class PythonPlugin:
     label = "Python"
 
     def discover(self, fixture_dir=None) -> PluginCatalog:
+        entries = python_versions(
+            Path(fixture_dir) if fixture_dir else None,
+            default_minor="3.13",
+        )
         versions = [
-            VersionEntry(value="3.14", label="Python 3.14", status="prerelease"),
-            VersionEntry(value="3.13", label="Python 3.13", default=True, status="active"),
-            VersionEntry(value="3.12", label="Python 3.12", status="supported"),
-            VersionEntry(value="3.11", label="Python 3.11", status="supported"),
-            VersionEntry(value="3.10", label="Python 3.10", status="eol"),
-            VersionEntry(value="3.9", label="Python 3.9", status="eol"),
-            VersionEntry(value="3.8", label="Python 3.8", status="eol"),
-            VersionEntry(value="3.7", label="Python 3.7", status="eol"),
-            VersionEntry(value="3.6", label="Python 3.6", status="eol"),
+            VersionEntry(
+                value=entry["version"],
+                label=f"Python {entry['version']}",
+                status=entry["status"],
+                default=entry["version"] == "3.13",
+            )
+            for entry in entries
         ]
         return PluginCatalog(plugin=self.id, versions=versions, defaults={"version": "3.13"})
 

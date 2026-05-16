@@ -99,6 +99,7 @@ jobs:
             UV_VERSION=${{ matrix.uv_version }}
             CODE_SERVER_VERSION=${{ matrix.code_server_version }}
             SCCACHE_VERSION=${{ matrix.sccache_version }}
+            SCCACHE_ASSET=${{ matrix.sccache_asset }}
             SCCACHE_SHA256=${{ matrix.sccache_sha256 }}
             LLVM_VERSION=${{ matrix.llvm_version }}
 

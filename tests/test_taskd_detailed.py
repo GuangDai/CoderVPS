@@ -37,23 +37,11 @@ def test_catalog_no_resolved_anywhere():
 
 
 def test_catalog_todo_coverage():
-    """Every TODO in catalog.py must follow the what/why/when format."""
+    """Catalog must no longer document unfinished discovery placeholders."""
     text = Path(ROOT / "codervps/catalog.py").read_text()
-    # Count TODOs with all 3 required parts
-    todos = [line.strip() for line in text.splitlines() if line.strip().startswith("# TODO:")]
-    for todo in todos:
-        # Must mention what and blocked and implemented (or similar)
-        has_what = ":" in todo
-        assert has_what, f"TODO missing explanation colon: {todo}"
-    # Count full TODO blocks (what/blocked/when)
-    blocked_count = text.count("Blocked by:")
-    implemented_count = text.count("Will be implemented:")
-    assert blocked_count >= 3, (
-        f"Expected at least 3 'Blocked by:' annotations, found {blocked_count}"
-    )
-    assert implemented_count >= 3, (
-        f"Expected at least 3 'Will be implemented:' annotations, found {implemented_count}"
-    )
+    assert "TODO:" not in text
+    assert "Blocked by:" not in text
+    assert "Will be implemented:" not in text
 
 
 def test_catalog_empty_versions_have_todo_nearby():
@@ -78,14 +66,14 @@ def test_catalog_empty_versions_have_todo_nearby():
 def test_discovery_python_versions_return_type():
     from codervps.discovery import python_versions
 
-    result = python_versions()
+    result = python_versions(fixture_dir=Path("tests/fixtures"))
     assert isinstance(result, list), "python_versions() must return list"
 
 
 def test_discovery_rust_channels_return_type():
     from codervps.discovery import rust_channels
 
-    result = rust_channels()
+    result = rust_channels(fixture_dir=Path("tests/fixtures"))
     assert isinstance(result, list)
     assert len(result) >= 3, "rust_channels() should return at least stable/beta/nightly"
     versions = [c["version"] for c in result]
@@ -97,52 +85,43 @@ def test_discovery_rust_channels_return_type():
 def test_discovery_cpp_llvm_versions_return_type():
     from codervps.discovery import cpp_llvm_versions
 
-    result = cpp_llvm_versions()
+    result = cpp_llvm_versions(fixture_dir=Path("tests/fixtures"))
     assert isinstance(result, list)
 
 
 def test_discovery_uv_version_return_type():
     from codervps.discovery import uv_version
 
-    result = uv_version()
+    result = uv_version(fixture_dir=Path("tests/fixtures"))
     assert isinstance(result, str)
-    assert result == "", "uv_version() should return empty string when no fixture and no API"
+    assert result
 
 
 def test_discovery_code_server_version_return_type():
     from codervps.discovery import code_server_version
 
-    result = code_server_version()
+    result = code_server_version(fixture_dir=Path("tests/fixtures"))
     assert isinstance(result, str)
-    assert result == "", "code_server_version() should return empty string when no fixture"
+    assert result
 
 
 def test_discovery_sccache_return_type():
-    from codervps.discovery import sccache_version_and_sha256
+    from codervps.discovery import sccache_release
 
-    result = sccache_version_and_sha256()
+    result = sccache_release(fixture_dir=Path("tests/fixtures"))
     assert isinstance(result, dict)
     assert "version" in result
+    assert "asset" in result
     assert "sha256" in result
-    assert result["version"] == "", "sccache version should be empty when no fixture"
-    assert result["sha256"] == "", "sccache sha256 should be empty when no fixture"
+    assert result["version"]
+    assert len(result["sha256"]) == 64
 
 
-def test_discovery_all_functions_have_todo():
-    """All new discovery stubs must have TODO annotations."""
+def test_discovery_functions_are_not_stubs():
+    """Discovery functions must not be TODO stubs."""
     source = Path(ROOT / "codervps/discovery.py").read_text()
-    # Each discovery function should have a TODO in its body
-    funcs_with_todo = [
-        "python_versions",
-        "rust_channels",
-        "cpp_llvm_versions",
-        "uv_version",
-        "code_server_version",
-        "sccache_version_and_sha256",
-    ]
-    for func in funcs_with_todo:
-        # Find the function body and check for TODO
-        assert "TODO:" in source, f"discovery.py has no TODO for {func}"
+    assert "TODO:" not in source
+    assert "return []  # Will be populated" not in source
 
 
 def test_discovery_python_versions_accepts_fixture_dir():
@@ -199,9 +178,10 @@ def test_catalog_imports_all_discovery_functions():
         "python_versions",
         "rust_channels",
         "cpp_llvm_versions",
+        "latest_coder_base_tag",
         "uv_version",
         "code_server_version",
-        "sccache_version_and_sha256",
+        "sccache_release",
     ]
     for func in required:
         assert func in source, f"catalog.py does not import {func}"
@@ -216,9 +196,8 @@ def test_catalog_calls_discovery_functions():
     assert "cpp_llvm_versions(" in source, "catalog.py should call cpp_llvm_versions()"
     assert "uv_version(" in source, "catalog.py should call uv_version()"
     assert "code_server_version(" in source, "catalog.py should call code_server_version()"
-    assert "sccache_version_and_sha256(" in source, (
-        "catalog.py should call sccache_version_and_sha256()"
-    )
+    assert "latest_coder_base_tag(" in source, "catalog.py should call latest_coder_base_tag()"
+    assert "sccache_release(" in source, "catalog.py should call sccache_release()"
 
 
 def test_refresh_catalog_tools_no_auto():
@@ -227,7 +206,7 @@ def test_refresh_catalog_tools_no_auto():
     from codervps.config import load_toolchains_config
 
     cfg = load_toolchains_config(Path("config/toolchains.toml"))
-    catalog = refresh_catalog(cfg)
+    catalog = refresh_catalog(cfg, fixture_dir=Path("tests/fixtures"))
 
     tools = catalog["tools"]
     for tool_name, tool_data in tools.items():
@@ -243,7 +222,7 @@ def test_refresh_catalog_tools_no_resolved():
     from codervps.config import load_toolchains_config
 
     cfg = load_toolchains_config(Path("config/toolchains.toml"))
-    catalog = refresh_catalog(cfg)
+    catalog = refresh_catalog(cfg, fixture_dir=Path("tests/fixtures"))
 
     serialized = json.dumps(catalog)
     assert "resolved-" not in serialized, "catalog output contains 'resolved-'"
@@ -300,9 +279,9 @@ def test_dockerfile_uv_fallback():
 
 
 def test_template_uses_imported_languages():
-    """template.py must import _LANGUAGES from extensions and use it."""
+    """template.py must import the canonical language list and use it."""
     source = Path(ROOT / "codervps/render/template.py").read_text()
-    assert "from .extensions import _LANGUAGES" in source
+    assert "from codervps.languages import LANGUAGE_IDS" in source
 
 
 def test_template_no_hardcoded_language_list_in_for():
@@ -312,10 +291,10 @@ def test_template_no_hardcoded_language_list_in_for():
 
 
 def test_extensions_exports_languages():
-    """extensions.py must export _LANGUAGES as a module-level constant."""
+    """extensions.py must export _LANGUAGES as a compatibility alias."""
     source = Path(ROOT / "codervps/render/extensions.py").read_text()
     assert "_LANGUAGES" in source
-    assert '["python", "rust", "go", "cpp"]' in source
+    assert "LANGUAGE_IDS" in source
 
 
 def test_languages_consistent_between_files():
@@ -326,6 +305,18 @@ def test_languages_consistent_between_files():
     assert set(_LANGUAGES) == set(_PLUGIN_TYPES.keys()), (
         f"_LANGUAGES={_LANGUAGES} and _PLUGIN_TYPES keys={list(_PLUGIN_TYPES.keys())} differ"
     )
+
+
+def test_language_list_has_single_source_module():
+    source_paths = [
+        ROOT / "codervps/render/extensions.py",
+        ROOT / "codervps/render/template.py",
+        ROOT / "codervps/plugins/__init__.py",
+    ]
+    for path in source_paths:
+        source = path.read_text()
+        assert "from codervps.languages import" in source or "from .languages import" in source
+        assert '["python", "rust", "go", "cpp"]' not in source
 
 
 # =============================================================================

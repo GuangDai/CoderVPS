@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from pathlib import Path
+
+from codervps.discovery import rust_channels
 from codervps.models import ParameterSpec, PluginCatalog, RuntimeAction, RuntimePlan, VersionEntry
 
 
@@ -8,15 +11,15 @@ class RustPlugin:
     label = "Rust"
 
     def discover(self, fixture_dir=None) -> PluginCatalog:
+        entries = rust_channels(Path(fixture_dir) if fixture_dir else None)
         versions = [
-            VersionEntry(value="stable", label="Stable", default=True, status="active"),
-            VersionEntry(value="beta", label="Beta", status="supported"),
-            VersionEntry(value="nightly", label="Nightly", status="supported"),
-            VersionEntry(value="1.85.0", label="1.85.0", status="supported"),
-            VersionEntry(value="1.84.0", label="1.84.0", status="supported"),
-            VersionEntry(value="1.83.0", label="1.83.0", status="supported"),
-            VersionEntry(value="1.82.0", label="1.82.0", status="supported"),
-            VersionEntry(value="1.81.0", label="1.81.0", status="supported"),
+            VersionEntry(
+                value=entry["version"],
+                label=entry["version"].title() if entry["version"].isalpha() else entry["version"],
+                status=entry["status"],
+                default=entry["version"] == "stable",
+            )
+            for entry in entries
         ]
         return PluginCatalog(
             plugin=self.id,

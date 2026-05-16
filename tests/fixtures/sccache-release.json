@@ -1,0 +1,17 @@
+{
+  "tag_name": "v0.15.0",
+  "assets": [
+    {
+      "name": "sccache-v0.15.0-s390x-unknown-linux-gnu.tar.gz",
+      "digest": "sha256:3a0892cc0334e8bb90436cb4a406408528d91794a8abb36f093c70b8d5904966"
+    },
+    {
+      "name": "sccache-v0.15.0-x86_64-unknown-linux-musl.tar.gz",
+      "digest": "sha256:782d2b5dd7ae0a55ebe368ab258114d0928d019ac2d949ab85d5d02f3926709e"
+    },
+    {
+      "name": "sccache-v0.15.0-x86_64-unknown-linux-musl.tar.gz.sha256",
+      "digest": "sha256:87eee2afd842950c83d51312149030ffadb42c749811a3e803b6ad5e0727dd7f"
+    }
+  ]
+}

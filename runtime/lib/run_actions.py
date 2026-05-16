@@ -59,7 +59,7 @@ def download(url: str, dest: str, sha256: str | None) -> None:
     final.parent.mkdir(parents=True, exist_ok=True)
     with urlopen(url, timeout=120) as response, part.open("wb") as fh:
         shutil.copyfileobj(response, fh)
-    if sha256 and sha256 != "auto":
+    if sha256:
         verify_sha256(part, sha256)
     os.replace(part, final)
 

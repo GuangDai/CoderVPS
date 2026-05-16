@@ -3,48 +3,42 @@
     "version": "go1.26.3",
     "stable": true,
     "files": [
-      {"filename": "go1.26.3.linux-amd64.tar.gz", "sha256": "sha-go-1263-amd64"},
-      {"filename": "go1.26.3.linux-arm64.tar.gz", "sha256": "sha-go-1263-arm64"}
+      {"filename": "go1.26.3.linux-amd64.tar.gz", "sha256": "2b2cfc7148493da5e73981bffbf3353af381d5f93e789c82c79aff64962eb556"}
     ]
   },
   {
-    "version": "go1.25.5",
+    "version": "go1.25.10",
     "stable": true,
     "files": [
-      {"filename": "go1.25.5.linux-amd64.tar.gz", "sha256": "sha-go-1255-amd64"},
-      {"filename": "go1.25.5.linux-arm64.tar.gz", "sha256": "sha-go-1255-arm64"}
+      {"filename": "go1.25.10.linux-amd64.tar.gz", "sha256": "42d4f7a32316aa66591eca7e89867256057a4264451aca10570a715b3637ba70"}
     ]
   },
   {
     "version": "go1.24.9",
     "stable": true,
     "files": [
-      {"filename": "go1.24.9.linux-amd64.tar.gz", "sha256": "sha-go-1249-amd64"},
-      {"filename": "go1.24.9.linux-arm64.tar.gz", "sha256": "sha-go-1249-arm64"}
+      {"filename": "go1.24.9.linux-amd64.tar.gz", "sha256": "5b7899591c2dd6e9da1809fde4a2fad842c45d3f6b9deb235ba82216e31e34a6"}
     ]
   },
   {
     "version": "go1.23.12",
     "stable": true,
     "files": [
-      {"filename": "go1.23.12.linux-amd64.tar.gz", "sha256": "sha-go-12312-amd64"},
-      {"filename": "go1.23.12.linux-arm64.tar.gz", "sha256": "sha-go-12312-arm64"}
+      {"filename": "go1.23.12.linux-amd64.tar.gz", "sha256": "d3847fef834e9db11bf64e3fb34db9c04db14e068eeb064f49af747010454f90"}
     ]
   },
   {
     "version": "go1.22.12",
     "stable": true,
     "files": [
-      {"filename": "go1.22.12.linux-amd64.tar.gz", "sha256": "sha-go-12212-amd64"},
-      {"filename": "go1.22.12.linux-arm64.tar.gz", "sha256": "sha-go-12212-arm64"}
+      {"filename": "go1.22.12.linux-amd64.tar.gz", "sha256": "4fa4f869b0f7fc6bb1eb2660e74657fbf04cdd290b5aef905585c86051b34d43"}
     ]
   },
   {
     "version": "go1.21.13",
-    "stable": false,
+    "stable": true,
     "files": [
-      {"filename": "go1.21.13.linux-amd64.tar.gz", "sha256": "sha-go-12113-amd64"},
-      {"filename": "go1.21.13.linux-arm64.tar.gz", "sha256": "sha-go-12113-arm64"}
+      {"filename": "go1.21.13.linux-amd64.tar.gz", "sha256": "502fc16d5910562461e6a6631fb6377de2322aad7304bf2bcd23500ba9dab4a7"}
     ]
   }
 ]

@@ -10,9 +10,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from codervps.languages import LANGUAGE_IDS
 from codervps.models import ExtensionsConfig
 
-_LANGUAGES = ["python", "rust", "go", "cpp"]
+_LANGUAGES = list(LANGUAGE_IDS)
 
 
 def render_extensions(cfg: ExtensionsConfig, output_dir: Path) -> None:

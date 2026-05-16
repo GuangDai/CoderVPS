@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gzip
 from pathlib import Path
 
 import pytest
@@ -13,7 +14,19 @@ from codervps.catalog import (
     refresh_catalog_from_path,
 )
 from codervps.config import load_toolchains_config
-from codervps.discovery import go_downloads, load_json, node_index
+from codervps.discovery import (
+    DiscoveryError,
+    code_server_version,
+    cpp_llvm_versions,
+    go_downloads,
+    latest_coder_base_tag,
+    load_json,
+    node_index,
+    python_versions,
+    rust_channels,
+    sccache_release,
+    uv_version,
+)
 
 
 # ---- Discovery helpers ----
@@ -33,6 +46,25 @@ def test_load_json_reads_array(tmp_path):
     assert result == [1, 2, 3]
 
 
+def test_fetch_json_decodes_gzip_response(monkeypatch):
+    from codervps.discovery import fetch_json
+
+    class Response:
+        headers = {"Content-Encoding": "gzip"}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return gzip.compress(b'{"ok": true}')
+
+    monkeypatch.setattr("codervps.discovery.urlopen", lambda *_args, **_kwargs: Response())
+    assert fetch_json("https://example.test/data.json") == {"ok": True}
+
+
 def test_node_index_with_fixtures():
     result = node_index(fixture_dir=Path("tests/fixtures"))
     assert isinstance(result, list)
@@ -40,9 +72,13 @@ def test_node_index_with_fixtures():
     assert any("v24" in str(e["version"]) for e in result)
 
 
-def test_node_index_without_fixtures_no_error():
-    result = node_index()
-    assert isinstance(result, list)
+def test_node_index_without_fixtures_fetch_error_is_actionable(monkeypatch):
+    def fail_fetch(url: str) -> object:
+        raise DiscoveryError(f"failed to fetch JSON metadata from {url}: test failure")
+
+    monkeypatch.setattr("codervps.discovery.fetch_json", fail_fetch)
+    with pytest.raises(DiscoveryError, match="failed to fetch JSON metadata"):
+        node_index()
 
 
 def test_go_downloads_with_fixtures():
@@ -52,9 +88,13 @@ def test_go_downloads_with_fixtures():
     assert any("go1.24.9" in str(e.get("version", "")) for e in result)
 
 
-def test_go_downloads_without_fixtures_no_error():
-    result = go_downloads()
-    assert isinstance(result, list)
+def test_go_downloads_without_fixtures_fetch_error_is_actionable(monkeypatch):
+    def fail_fetch(url: str) -> object:
+        raise DiscoveryError(f"failed to fetch JSON metadata from {url}: test failure")
+
+    monkeypatch.setattr("codervps.discovery.fetch_json", fail_fetch)
+    with pytest.raises(DiscoveryError, match="failed to fetch JSON metadata"):
+        go_downloads()
 
 
 # ---- Node status helper ----
@@ -132,7 +172,13 @@ def test_refresh_catalog_base_info():
     catalog = refresh_catalog(cfg, fixture_dir=Path("tests/fixtures"))
     assert catalog["base"]["source"] == "codercom/example-base"
     assert catalog["base"]["ubuntu"] == "noble"
-    assert catalog["base"]["tag"] == "ubuntu-noble-20260511"
+    assert catalog["base"]["tag"] == "ubuntu-noble-20260512"
+
+
+def test_latest_coder_base_tag_from_fixture_ignores_floating_tags():
+    assert latest_coder_base_tag("noble", fixture_dir=Path("tests/fixtures")) == (
+        "ubuntu-noble-20260512"
+    )
 
 
 def test_refresh_catalog_has_generated_at():
@@ -146,17 +192,21 @@ def test_refresh_catalog_plugin_defaults():
     catalog = refresh_catalog(cfg, fixture_dir=Path("tests/fixtures"))
     assert catalog["plugins"]["python"]["defaults"]["version"] == "3.13"
     assert catalog["plugins"]["rust"]["defaults"]["toolchain"] == "stable"
-    assert catalog["plugins"]["go"]["defaults"]["version"] == "latest"
-    assert catalog["plugins"]["cpp"]["defaults"]["llvm"] == "latest"
+    assert catalog["plugins"]["go"]["defaults"]["version"] == "1.26.3"
+    assert catalog["plugins"]["cpp"]["defaults"]["llvm"] == "22"
 
 
 def test_refresh_catalog_tools():
     cfg = load_toolchains_config(Path("config/toolchains.toml"))
     catalog = refresh_catalog(cfg, fixture_dir=Path("tests/fixtures"))
-    assert "uv" in catalog["tools"]
-    assert "code_server" in catalog["tools"]
-    assert "sccache" in catalog["tools"]
-    assert "llvm_prebundle" in catalog["tools"]
+    assert catalog["tools"]["uv"]["version"] == "0.11.14"
+    assert catalog["tools"]["code_server"]["version"] == "4.118.0"
+    assert catalog["tools"]["sccache"]["version"] == "0.15.0"
+    assert catalog["tools"]["sccache"]["asset"] == (
+        "sccache-v0.15.0-x86_64-unknown-linux-musl.tar.gz"
+    )
+    assert len(catalog["tools"]["sccache"]["sha256"]) == 64
+    assert catalog["tools"]["llvm_prebundle"]["version"] == "22"
 
 
 def test_refresh_catalog_go_versions_from_fixtures():
@@ -174,8 +224,59 @@ def test_refresh_catalog_go_versions_have_sha256():
     catalog = refresh_catalog(cfg, fixture_dir=Path("tests/fixtures"))
     go_versions = catalog["plugins"]["go"]["versions"]
     for v in go_versions:
-        if v["status"] == "active":
-            assert v["sha256"], f"Missing SHA256 for Go {v['version']}"
+        assert len(v["sha256"]) == 64, f"Missing SHA256 for Go {v['version']}"
+        assert all(c in "0123456789abcdef" for c in v["sha256"])
+
+
+def test_refresh_catalog_populates_language_versions_from_discovery():
+    cfg = load_toolchains_config(Path("config/toolchains.toml"))
+    catalog = refresh_catalog(cfg, fixture_dir=Path("tests/fixtures"))
+    assert [item["version"] for item in catalog["plugins"]["python"]["versions"]] == [
+        "3.13",
+        "3.12",
+        "3.8",
+    ]
+    assert [item["version"] for item in catalog["plugins"]["rust"]["versions"][:6]] == [
+        "stable",
+        "beta",
+        "nightly",
+        "1.91",
+        "1.90",
+        "1.89",
+    ]
+    assert [item["version"] for item in catalog["plugins"]["cpp"]["versions"]] == [
+        "23",
+        "22",
+        "21",
+    ]
+
+
+def test_tool_discovery_uses_release_fixtures():
+    assert uv_version(fixture_dir=Path("tests/fixtures")) == "0.11.14"
+    assert code_server_version(fixture_dir=Path("tests/fixtures")) == "4.118.0"
+    sccache = sccache_release(fixture_dir=Path("tests/fixtures"), arch="linux/amd64")
+    assert sccache == {
+        "version": "0.15.0",
+        "asset": "sccache-v0.15.0-x86_64-unknown-linux-musl.tar.gz",
+        "sha256": "782d2b5dd7ae0a55ebe368ab258114d0928d019ac2d949ab85d5d02f3926709e",
+        "target": "x86_64-unknown-linux-musl",
+    }
+
+
+def test_language_discovery_functions_parse_fixtures():
+    assert python_versions(fixture_dir=Path("tests/fixtures"), default_minor="3.13")[0] == {
+        "version": "3.13",
+        "status": "active",
+    }
+    assert rust_channels(fixture_dir=Path("tests/fixtures"), stable_minor_count=3)[-1] == {
+        "version": "1.89",
+        "status": "supported",
+    }
+    assert cpp_llvm_versions(fixture_dir=Path("tests/fixtures")) == [
+        {"version": "23", "status": "snapshot"},
+        {"version": "22", "status": "active"},
+        {"version": "21", "status": "supported"},
+    ]
 
 
 def test_refresh_catalog_from_path():
@@ -233,8 +334,10 @@ def test_refresh_catalog_without_override_defaults():
         cpp_default_tools=cfg.cpp_default_tools,
     )
     catalog = refresh_catalog(cfg_empty, fixture_dir=Path("tests/fixtures"))
-    assert catalog["tools"]["uv"]["version"] == ""
-    assert catalog["tools"]["sccache"]["version"] == ""
+    assert catalog["tools"]["uv"]["version"] == "0.11.14"
+    assert catalog["tools"]["code_server"]["version"] == "4.118.0"
+    assert catalog["tools"]["sccache"]["version"] == "0.15.0"
+    assert len(catalog["tools"]["sccache"]["sha256"]) == 64
 
 
 def test_refresh_catalog_schema_version_is_int():

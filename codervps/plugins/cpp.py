@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from pathlib import Path
+
+from codervps.discovery import cpp_llvm_versions
 from codervps.models import ParameterSpec, PluginCatalog, RuntimeAction, RuntimePlan, VersionEntry
 
 
@@ -8,17 +11,21 @@ class CppPlugin:
     label = "C/C++"
 
     def discover(self, fixture_dir=None) -> PluginCatalog:
+        entries = cpp_llvm_versions(Path(fixture_dir) if fixture_dir else None)
+        default = next((entry["version"] for entry in entries if entry["status"] != "snapshot"), "")
         versions = [
-            VersionEntry(value="20", label="LLVM 20", status="prerelease"),
-            VersionEntry(value="19", label="LLVM 19", default=True, status="active"),
-            VersionEntry(value="18", label="LLVM 18", status="active"),
-            VersionEntry(value="17", label="LLVM 17", status="supported"),
-            VersionEntry(value="16", label="LLVM 16", status="eol"),
+            VersionEntry(
+                value=entry["version"],
+                label=f"LLVM {entry['version']}",
+                status=entry["status"],
+                default=entry["version"] == default,
+            )
+            for entry in entries
         ]
         return PluginCatalog(
             plugin=self.id,
             versions=versions,
-            defaults={"llvm": "19"},
+            defaults={"llvm": default},
         )
 
     def coder_parameters(self, catalog: PluginCatalog) -> list[ParameterSpec]:

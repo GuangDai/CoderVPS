@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .extensions import _LANGUAGES
+from codervps.languages import LANGUAGE_IDS, LANGUAGE_LABELS
 
 
 def _make_node_options(catalog: dict) -> list[dict]:
@@ -20,13 +20,8 @@ def _make_node_options(catalog: dict) -> list[dict]:
 
 
 def _make_language_options() -> list[dict]:
-    """Build language multi-select options (fixed 4 languages)."""
-    return [
-        {"name": "Python", "value": "python"},
-        {"name": "Rust", "value": "rust"},
-        {"name": "Go", "value": "go"},
-        {"name": "C/C++", "value": "cpp"},
-    ]
+    """Build language multi-select options."""
+    return [{"name": LANGUAGE_LABELS[language], "value": language} for language in LANGUAGE_IDS]
 
 
 def _make_default_node_major(catalog: dict) -> str:
@@ -50,34 +45,18 @@ def _make_extra_packs_options() -> list[dict]:
         return []
 
 
-def _build_rust_toolchain_options() -> list[dict]:
-    """Build Rust toolchain options: stable, beta, nightly + 30 recent stable minors.
-
-    The starting stable minor is configurable via rust.stable_minor_count in
-    toolchains.toml, but since the actual latest stable is discovered at catalog
-    time, these represent the channels rustup can install.
-
-    # TODO: use latest_stable from rustup/dist-server metadata to compute
-    # the exact 30 most recent stable minor channels dynamically
-    # Blocked by: no rustup metadata discovery implemented yet
-    # Will be implemented: Task D (T13 Full Validation)
-    """
-    options: list[dict] = [
-        {"name": "Stable", "value": "stable"},
-        {"name": "Beta", "value": "beta"},
-        {"name": "Nightly", "value": "nightly"},
-    ]
-    # 30 most recent stable minor version channels (configurable start).
-    # These are channels rustup recognizes as installable stable toolchains.
-    # TODO: derive start value dynamically from rustup/dist-server metadata
-    # The value 88 represents the latest stable minor as of 2026-05.
-    # Blocked by: no rustup metadata discovery implemented yet
-    # Will be implemented: Task D (T13 Full Validation)
-    start = 88
-    for i in range(30):
-        ver = f"1.{start - i}"
-        options.append({"name": f"Rust {ver}", "value": ver})
-    return options
+def _version_options(prefix: str, versions: list[dict], fallback: str) -> list[dict]:
+    if versions:
+        return [
+            {
+                "name": f"{prefix} {v.get('version', v.get('value', ''))}",
+                "value": v.get("version", v.get("value", "")),
+            }
+            for v in versions
+        ]
+    if fallback:
+        return [{"name": f"{prefix} {fallback}", "value": fallback}]
+    return []
 
 
 def _make_language_parameters(catalog: dict) -> dict:
@@ -91,36 +70,19 @@ def _make_language_parameters(catalog: dict) -> dict:
     plugins = catalog.get("plugins", {})
 
     plugin_param_orders = {"python": (10, 19), "rust": (20, 29), "go": (30, 39), "cpp": (40, 49)}
-    plugin_labels = {"python": "Python", "rust": "Rust", "go": "Go", "cpp": "C/C++"}
 
-    for plugin_id in _LANGUAGES:
+    for plugin_id in LANGUAGE_IDS:
         if plugin_id not in plugins:
             continue
         order_range = plugin_param_orders.get(plugin_id, (50, 59))
-        label = plugin_labels.get(plugin_id, plugin_id)
+        label = LANGUAGE_LABELS[plugin_id]
         plugin_catalog = plugins[plugin_id]
         defaults = plugin_catalog.get("defaults", {})
 
         if plugin_id == "python":
             version_default = defaults.get("version", "3.13")
             versions = plugin_catalog.get("versions", [])
-            if versions:
-                options = [
-                    {
-                        "name": f"Python {v.get('version', v.get('value', ''))}",
-                        "value": v.get("version", v.get("value", "")),
-                    }
-                    for v in versions
-                ]
-            else:
-                # TODO: populate from uv python install --list once catalog has python versions
-                # Blocked by: python version discovery not implemented in catalog refresh
-                # Will be implemented: Task D (T13 Full Validation)
-                options = [
-                    {"name": "Python 3.13", "value": "3.13"},
-                    {"name": "Python 3.12", "value": "3.12"},
-                    {"name": "Python 3.11", "value": "3.11"},
-                ]
+            options = _version_options("Python", versions, version_default)
 
             params["python_version"] = {
                 "name": "python_version",
@@ -151,6 +113,16 @@ def _make_language_parameters(catalog: dict) -> dict:
             }
         elif plugin_id == "rust":
             toolchain_default = defaults.get("toolchain", "stable")
+            versions = plugin_catalog.get("versions", [])
+            options = [
+                {
+                    "name": v.get("version", v.get("value", "")).title()
+                    if v.get("version", v.get("value", "")).isalpha()
+                    else f"Rust {v.get('version', v.get('value', ''))}",
+                    "value": v.get("version", v.get("value", "")),
+                }
+                for v in versions
+            ] or [{"name": "Stable", "value": toolchain_default}]
             params["rust_toolchain"] = {
                 "name": "rust_toolchain",
                 "display_name": f"{label} Toolchain",
@@ -160,23 +132,12 @@ def _make_language_parameters(catalog: dict) -> dict:
                 "default": toolchain_default,
                 "order": order_range[0],
                 "condition": 'contains(data.coder_parameter.languages.value, "rust")',
-                "option": _build_rust_toolchain_options(),
+                "option": options,
             }
         elif plugin_id == "go":
             version_default = defaults.get("version", "1.24.9")
             versions = plugin_catalog.get("versions", [])
-            if versions:
-                options = []
-                for v in versions:
-                    val = v.get("version", "")
-                    options.append({"name": f"Go {val}", "value": val})
-            else:
-                # TODO: populate from go.dev/dl catalog when not using fixtures
-                # Blocked by: go discovery already implemented in catalog refresh
-                # Will be resolved: when catalog has go versions from discovery
-                options = [
-                    {"name": "Go 1.24", "value": "1.24.9"},
-                ]
+            options = _version_options("Go", versions, version_default)
 
             params["go_version"] = {
                 "name": "go_version",
@@ -205,9 +166,7 @@ def _make_language_parameters(catalog: dict) -> dict:
             }
         elif plugin_id == "cpp":
             llvm_default = defaults.get("llvm", "19")
-            # TODO: populate LLVM versions from apt.llvm.org metadata
-            # Blocked by: llvm version discovery not implemented in catalog refresh
-            # Will be implemented: Task D (T13 Full Validation)
+            versions = plugin_catalog.get("versions", [])
             params["cpp_llvm"] = {
                 "name": "cpp_llvm",
                 "display_name": f"{label} LLVM Version",
@@ -217,11 +176,7 @@ def _make_language_parameters(catalog: dict) -> dict:
                 "default": llvm_default,
                 "order": order_range[0],
                 "condition": 'contains(data.coder_parameter.languages.value, "cpp")',
-                "option": [
-                    {"name": "LLVM 19", "value": "19"},
-                    {"name": "LLVM 18", "value": "18"},
-                    {"name": "LLVM 17", "value": "17"},
-                ],
+                "option": _version_options("LLVM", versions, llvm_default),
             }
     return params
 

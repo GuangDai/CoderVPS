@@ -7,13 +7,25 @@ tags and Docker build arguments mapped from the toolchain catalog.
 from __future__ import annotations
 
 import json
+import re
 
 
-def _clean_version(value: str) -> str:
-    """Return empty string for 'auto' and 'resolved-*' placeholders."""
-    if not value or value == "auto" or value.startswith("resolved-"):
+def _validated_optional(value: object, field_name: str) -> str:
+    """Return an optional build arg value, rejecting placeholder strings."""
+    if value is None:
         return ""
-    return value
+    text = str(value)
+    if text in {"auto", "placeholder", "TBD"} or text.startswith("resolved-"):
+        raise ValueError(f"{field_name} contains forbidden placeholder value: {text}")
+    return text
+
+
+def _tag_from_base(base_tag: str) -> str:
+    match = re.fullmatch(r"ubuntu-([a-z]+)-(\d{8})", base_tag)
+    if not match:
+        raise ValueError(f"base tag must be date-pinned ubuntu-<codename>-YYYYMMDD: {base_tag}")
+    codename, date = match.groups()
+    return f"{codename}-{date}"
 
 
 def build_matrix(catalog: dict, image_repo: str) -> list[dict]:
@@ -41,8 +53,7 @@ def build_matrix(catalog: dict, image_repo: str) -> list[dict]:
         node_info = node_majors[major_str]
         node_version = node_info.get("version", "")
 
-        # Tag: noble-YYYYMMDD-nodeMAJOR derived from base tag
-        tag = f"{base_tag.replace('ubuntu-noble-', 'noble-')}-node{major_str}"
+        tag = f"{_tag_from_base(base_tag)}-node{major_str}"
 
         entry: dict = {
             "tag": tag,
@@ -50,11 +61,27 @@ def build_matrix(catalog: dict, image_repo: str) -> list[dict]:
             "base_image": f"{base_source}:{base_tag}",
             "node_major": major_int,
             "node_version": node_version,
-            "uv_version": _clean_version(tools.get("uv", {}).get("version", "")),
-            "code_server_version": _clean_version(tools.get("code_server", {}).get("version", "")),
-            "sccache_version": _clean_version(tools.get("sccache", {}).get("version", "")),
-            "sccache_sha256": _clean_version(tools.get("sccache", {}).get("sha256", "")),
-            "llvm_version": _clean_version(tools.get("llvm_prebundle", {}).get("version", "")),
+            "uv_version": _validated_optional(tools.get("uv", {}).get("version", ""), "uv.version"),
+            "code_server_version": _validated_optional(
+                tools.get("code_server", {}).get("version", ""),
+                "code_server.version",
+            ),
+            "sccache_version": _validated_optional(
+                tools.get("sccache", {}).get("version", ""),
+                "sccache.version",
+            ),
+            "sccache_asset": _validated_optional(
+                tools.get("sccache", {}).get("asset", ""),
+                "sccache.asset",
+            ),
+            "sccache_sha256": _validated_optional(
+                tools.get("sccache", {}).get("sha256", ""),
+                "sccache.sha256",
+            ),
+            "llvm_version": _validated_optional(
+                tools.get("llvm_prebundle", {}).get("version", ""),
+                "llvm_prebundle.version",
+            ),
         }
         matrix.append(entry)
 

@@ -102,6 +102,11 @@ def test_run_actions_download_uses_part_files():
     assert "verify_sha256" in text
 
 
+def test_run_actions_does_not_skip_auto_sha256_verification():
+    text = _run_actions_text()
+    assert 'sha256 != "auto"' not in text
+
+
 def test_run_actions_download_atomic_rename():
     text = _run_actions_text()
     assert "os.replace" in text

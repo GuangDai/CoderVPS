@@ -8,10 +8,12 @@ from .discovery import (
     code_server_version,
     cpp_llvm_versions,
     go_downloads,
+    go_linux_amd64_sha256,
+    latest_coder_base_tag,
     node_index,
     python_versions,
     rust_channels,
-    sccache_version_and_sha256,
+    sccache_release,
     uv_version,
 )
 from .models import ToolchainsConfig
@@ -42,12 +44,9 @@ def refresh_catalog(cfg: ToolchainsConfig, fixture_dir: Path | None = None) -> d
         ver = item["version"]
         v = ver.removeprefix("go")
         stable = item.get("stable", False)
-        files = item.get("files", [])
-        sha256 = ""
-        for f in files:
-            if "linux-amd64.tar.gz" in f.get("filename", ""):
-                sha256 = f.get("sha256", "")
-                break
+        sha256 = go_linux_amd64_sha256(item)
+        if not sha256:
+            continue
         go_versions.append(
             {
                 "version": v,
@@ -56,54 +55,28 @@ def refresh_catalog(cfg: ToolchainsConfig, fixture_dir: Path | None = None) -> d
             }
         )
 
-    # Discovered or fixture-backed values (empty until real discovery is implemented)
-    # TODO: resolve base tag from Docker Hub API (codercom/example-base tags endpoint)
-    # The date tag "ubuntu-noble-20260511" is a hardcoded example that must be
-    # dynamically resolved in production.
-    # Blocked by: no Docker Hub registry client implemented yet
-    # Will be implemented: Task D (T13 Full Validation)
-    base_tag = "ubuntu-noble-20260511"
-
-    # Python versions from uv python install --list discovery
-    python_vers = python_versions(fixture_dir)
-    # TODO: populate python versions from uv python install --list
-    # Blocked by: uv python output parser not yet implemented
-    # Will be implemented: Task D (T13 Full Validation)
-
-    # Rust channels from rustup/dist-server metadata
-    rust_vers = rust_channels(fixture_dir)
-    # TODO: populate stable minor versions from rustup channel manifest
-    # Blocked by: rustup metadata parser not yet implemented
-    # Will be implemented: Task D (T13 Full Validation)
-
-    # C++ LLVM versions from apt.llvm.org
+    base_tag = latest_coder_base_tag("noble", fixture_dir)
+    python_vers = python_versions(
+        fixture_dir,
+        min_minor=cfg.python_min_minor,
+        max_minor=cfg.python_max_minor,
+        default_minor=cfg.python_default,
+    )
+    rust_vers = rust_channels(
+        fixture_dir,
+        stable_minor_count=cfg.rust_stable_minor_count,
+    )
     cpp_vers = cpp_llvm_versions(fixture_dir)
-    # TODO: populate LLVM versions from apt.llvm.org repo metadata
-    # Blocked by: apt repository metadata parser not yet implemented
-    # Will be implemented: Task D (T13 Full Validation)
 
-    # Tool versions from discovery (empty until real APIs are implemented)
-    resolved_uv = cfg.overrides.get("uv") or uv_version(fixture_dir)
-    # TODO: resolve uv version from github.com/astral-sh/uv/releases
-    # Blocked by: GitHub API client not yet implemented
-    # Will be implemented: Task D (T13 Full Validation)
-
-    resolved_code_server = cfg.overrides.get("code_server") or code_server_version(fixture_dir)
-    # TODO: resolve code-server version from github.com/coder/code-server/releases
-    # Blocked by: GitHub API client not yet implemented
-    # Will be implemented: Task D (T13 Full Validation)
-
-    sccache_info = sccache_version_and_sha256(fixture_dir)
-    resolved_sccache = cfg.overrides.get("sccache") or sccache_info["version"]
-    resolved_sccache_sha256 = sccache_info["sha256"]
-    # TODO: resolve sccache version and SHA256 from github.com/rust-lang/sccache/releases
-    # Blocked by: GitHub API client not yet implemented
-    # Will be implemented: Task D (T13 Full Validation)
-
-    resolved_llvm = cfg.overrides.get("llvm_prebundle") or ""
-    # TODO: resolve LLVM prebundle version from apt.llvm.org
-    # Blocked by: apt repo metadata parser not yet implemented
-    # Will be implemented: Task D (T13 Full Validation)
+    selected_uv = cfg.overrides.get("uv") or uv_version(fixture_dir)
+    selected_code_server = cfg.overrides.get("code_server") or code_server_version(fixture_dir)
+    sccache_info = sccache_release(fixture_dir, arch=cfg.project_arch)
+    selected_sccache = cfg.overrides.get("sccache") or sccache_info["version"]
+    sccache_sha256 = sccache_info["sha256"]
+    explicit_llvm = cfg.overrides.get("llvm_prebundle")
+    selected_llvm = explicit_llvm or _default_llvm_prebundle(cpp_vers)
+    default_go = _default_go_version(go_versions, cfg.go_default)
+    default_cpp_llvm = selected_llvm if cfg.cpp_default_llvm == "latest" else cfg.cpp_default_llvm
 
     return {
         "schema_version": 1,
@@ -126,17 +99,19 @@ def refresh_catalog(cfg: ToolchainsConfig, fixture_dir: Path | None = None) -> d
         "plugins": {
             "python": {"versions": python_vers, "defaults": {"version": cfg.python_default}},
             "rust": {"versions": rust_vers, "defaults": {"toolchain": cfg.rust_default}},
-            "go": {"versions": go_versions, "defaults": {"version": cfg.go_default}},
-            "cpp": {"versions": cpp_vers, "defaults": {"llvm": cfg.cpp_default_llvm}},
+            "go": {"versions": go_versions, "defaults": {"version": default_go}},
+            "cpp": {"versions": cpp_vers, "defaults": {"llvm": default_cpp_llvm}},
         },
         "tools": {
-            "uv": {"version": resolved_uv},
-            "code_server": {"version": resolved_code_server},
+            "uv": {"version": selected_uv},
+            "code_server": {"version": selected_code_server},
             "sccache": {
-                "version": resolved_sccache,
-                "sha256": resolved_sccache_sha256,
+                "version": selected_sccache,
+                "asset": sccache_info["asset"],
+                "target": sccache_info["target"],
+                "sha256": sccache_sha256,
             },
-            "llvm_prebundle": {"version": resolved_llvm},
+            "llvm_prebundle": {"version": selected_llvm},
         },
     }
 
@@ -145,3 +120,23 @@ def refresh_catalog_from_path(config_path: str, fixture_dir: str | None = None) 
     cfg = load_toolchains_config(Path(config_path))
     fd = Path(fixture_dir) if fixture_dir else None
     return refresh_catalog(cfg, fixture_dir=fd)
+
+
+def _default_llvm_prebundle(versions: list[dict]) -> str:
+    for version in versions:
+        if version.get("status") != "snapshot":
+            return str(version["version"])
+    if versions:
+        return str(versions[0]["version"])
+    raise ValueError("cannot choose LLVM prebundle version from empty discovery result")
+
+
+def _default_go_version(versions: list[dict], configured_default: str) -> str:
+    if configured_default != "latest":
+        return configured_default
+    for version in versions:
+        if version.get("status") == "active":
+            return str(version["version"])
+    if versions:
+        return str(versions[0]["version"])
+    raise ValueError("cannot choose Go default version from empty discovery result")

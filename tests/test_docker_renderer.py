@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from codervps.render.docker import build_matrix, format_matrix_output
 
 
@@ -56,6 +58,7 @@ def test_build_matrix_all_keys_present():
         "uv_version",
         "code_server_version",
         "sccache_version",
+        "sccache_asset",
         "sccache_sha256",
         "llvm_version",
     }
@@ -106,7 +109,11 @@ def test_build_matrix_tool_values_from_catalog():
         "tools": {
             "uv": {"version": "0.6.0"},
             "code_server": {"version": "4.99.0"},
-            "sccache": {"version": "0.9.0", "sha256": "a" * 64},
+            "sccache": {
+                "version": "0.15.0",
+                "asset": "sccache-v0.15.0-x86_64-unknown-linux-musl.tar.gz",
+                "sha256": "a" * 64,
+            },
             "llvm_prebundle": {"version": "19"},
         },
     }
@@ -114,7 +121,8 @@ def test_build_matrix_tool_values_from_catalog():
     entry = matrix[0]
     assert entry["uv_version"] == "0.6.0"
     assert entry["code_server_version"] == "4.99.0"
-    assert entry["sccache_version"] == "0.9.0"
+    assert entry["sccache_version"] == "0.15.0"
+    assert entry["sccache_asset"] == "sccache-v0.15.0-x86_64-unknown-linux-musl.tar.gz"
     assert entry["sccache_sha256"] == "a" * 64
     assert entry["llvm_version"] == "19"
 
@@ -128,19 +136,19 @@ def test_build_matrix_defaults_empty_strings():
     matrix = build_matrix(catalog, "ghcr.io/test/image")
     entry = matrix[0]
     assert entry["uv_version"] == ""
+    assert entry["sccache_asset"] == ""
     assert entry["sccache_sha256"] == ""
 
 
 def test_build_matrix_no_auto_strings():
-    """No 'auto' string anywhere in matrix output."""
+    """Placeholder strings fail validation instead of being emitted."""
     catalog = {
         "base": {"tag": "ubuntu-noble-20260511"},
         "node": {"majors": {"24": {"version": "24.11.1"}}},
         "tools": {"uv": {"version": "auto"}, "sccache": {"sha256": "auto"}},
     }
-    matrix = build_matrix(catalog, "ghcr.io/test/image")
-    text = json.dumps(matrix, sort_keys=True)
-    assert '"auto"' not in text
+    with pytest.raises(ValueError, match="placeholder"):
+        build_matrix(catalog, "ghcr.io/test/image")
 
 
 def test_build_matrix_no_resolved_placeholders():
@@ -178,6 +186,7 @@ def test_format_matrix_output_json():
             "uv_version": "",
             "code_server_version": "",
             "sccache_version": "",
+            "sccache_asset": "",
             "sccache_sha256": "",
             "llvm_version": "",
         }
@@ -200,6 +209,7 @@ def test_format_matrix_output_github():
             "uv_version": "",
             "code_server_version": "",
             "sccache_version": "",
+            "sccache_asset": "",
             "sccache_sha256": "",
             "llvm_version": "",
         }
@@ -259,6 +269,29 @@ def test_format_matrix_output_trailing_newline_github():
     assert output.endswith("\n")
 
 
+def test_build_matrix_rejects_placeholder_tool_values():
+    catalog = {
+        "base": {"tag": "ubuntu-noble-20260511"},
+        "node": {"majors": {"24": {"version": "24.11.1"}}},
+        "tools": {"uv": {"version": "auto"}},
+    }
+    try:
+        build_matrix(catalog, "ghcr.io/test/image")
+    except ValueError as exc:
+        assert "placeholder" in str(exc)
+    else:
+        raise AssertionError("placeholder tool values must fail validation")
+
+
+def test_dockerfile_uses_discovered_sccache_asset_arg():
+    from pathlib import Path
+
+    text = Path("docker/Dockerfile").read_text()
+    assert "ARG SCCACHE_ASSET" in text
+    assert 'file="${SCCACHE_ASSET}"' in text
+    assert "x86_64-unknown-linux-musl" not in text
+
+
 def test_build_matrix_uses_configured_image_repo():
     catalog = {
         "base": {"tag": "ubuntu-noble-20260511"},
@@ -270,8 +303,8 @@ def test_build_matrix_uses_configured_image_repo():
 
 def test_build_matrix_base_image_uses_source():
     catalog = {
-        "base": {"source": "docker.io/library/ubuntu", "tag": "noble"},
+        "base": {"source": "docker.io/library/ubuntu", "tag": "ubuntu-noble-20260511"},
         "node": {"majors": {"24": {"version": "24.0.0"}}},
     }
     matrix = build_matrix(catalog, "ghcr.io/test/image")
-    assert matrix[0]["base_image"] == "docker.io/library/ubuntu:noble"
+    assert matrix[0]["base_image"] == "docker.io/library/ubuntu:ubuntu-noble-20260511"

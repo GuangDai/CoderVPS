@@ -41,6 +41,10 @@ templates/
 5. `images.json` is written only after all images succeed.
 6. The generated tree is committed to the `generated` branch via `--force-with-lease`.
 
+Catalog discovery sources and fixture rules are documented in
+[`catalog-discovery.md`](catalog-discovery.md). Generated catalog values should
+come from those sources or explicit config overrides, not placeholders.
+
 ## Safety Rules
 
 - The `generated` branch is pushed with `--force-with-lease`, never bare `--force`.

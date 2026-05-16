@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import json
+import re
 from pathlib import Path
 
+from codervps.discovery import go_downloads, go_linux_amd64_sha256
 from codervps.models import ParameterSpec, PluginCatalog, RuntimeAction, RuntimePlan, VersionEntry
 
 
@@ -11,21 +12,22 @@ class GoPlugin:
     label = "Go"
 
     def discover(self, fixture_dir=None) -> PluginCatalog:
-        if fixture_dir:
-            data = json.loads((Path(fixture_dir) / "go-dl.json").read_text())
-        else:
-            data = self._default_go_versions()
+        data = go_downloads(Path(fixture_dir) if fixture_dir else None)
         versions = []
         for item in data:
             ver = item["version"]
             version_str = ver.removeprefix("go")
             stable = item.get("stable", False)
+            sha256 = go_linux_amd64_sha256(item)
+            if not sha256:
+                continue
             versions.append(
                 VersionEntry(
                     value=version_str,
                     label=f"Go {version_str}",
                     status="active" if stable else "prerelease",
                     default=(version_str == "1.24.9"),
+                    metadata={"sha256": sha256},
                 )
             )
         if not any(v.default for v in versions) and versions:
@@ -52,36 +54,6 @@ class GoPlugin:
             versions=versions,
             defaults={"version": first_stable.value if first_stable else "1.24.9"},
         )
-
-    @staticmethod
-    def _default_go_versions() -> list[dict]:
-        return [
-            {
-                "version": "go1.26.3",
-                "stable": True,
-                "files": [{"filename": "go1.26.3.linux-amd64.tar.gz", "sha256": "sha-go-1263"}],
-            },
-            {
-                "version": "go1.25.5",
-                "stable": True,
-                "files": [{"filename": "go1.25.5.linux-amd64.tar.gz", "sha256": "sha-go-1255"}],
-            },
-            {
-                "version": "go1.24.9",
-                "stable": True,
-                "files": [{"filename": "go1.24.9.linux-amd64.tar.gz", "sha256": "sha-go-1249"}],
-            },
-            {
-                "version": "go1.23.12",
-                "stable": True,
-                "files": [{"filename": "go1.23.12.linux-amd64.tar.gz", "sha256": "sha-go-12312"}],
-            },
-            {
-                "version": "go1.22.12",
-                "stable": True,
-                "files": [{"filename": "go1.22.12.linux-amd64.tar.gz", "sha256": "sha-go-12212"}],
-            },
-        ]
 
     def coder_parameters(self, catalog: PluginCatalog) -> list[ParameterSpec]:
         return [
@@ -114,6 +86,11 @@ class GoPlugin:
 
     def runtime_plan(self, selection: dict) -> RuntimePlan:
         version = str(selection["version"])
+        sha256 = str(selection.get("sha256", ""))
+        if not sha256:
+            raise ValueError("Go runtime_plan requires sha256 for selected version")
+        if not re.fullmatch(r"[0-9a-f]{64}", sha256):
+            raise ValueError("Go runtime_plan requires a real 64-character hex sha256")
         tools = selection.get("tools", ["gopls"])
         if isinstance(tools, str):
             tools = [tools]
@@ -144,7 +121,7 @@ class GoPlugin:
                 values={
                     "url": url,
                     "dest": tarball,
-                    "sha256": "auto",
+                    "sha256": sha256,
                 },
             ),
             RuntimeAction(

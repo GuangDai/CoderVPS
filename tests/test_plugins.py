@@ -15,6 +15,27 @@ from codervps.plugins.python import PythonPlugin
 from codervps.plugins.rust import RustPlugin
 
 
+GO_1_22_12_SHA256 = "4fa4f869b0f7fc6bb1eb2660e74657fbf04cdd290b5aef905585c86051b34d43"
+
+
+def _go_selection(**overrides: object) -> dict:
+    selection = {"version": "1.22.12", "sha256": GO_1_22_12_SHA256}
+    selection.update(overrides)
+    return selection
+
+
+def _selection_for(plugin_id: str) -> dict:
+    if plugin_id == "python":
+        return {"version": "3.13"}
+    if plugin_id == "rust":
+        return {"toolchain": "stable"}
+    if plugin_id == "go":
+        return _go_selection()
+    if plugin_id == "cpp":
+        return {"llvm": "19"}
+    raise AssertionError(f"unknown plugin id {plugin_id}")
+
+
 # ---- Registry ----
 
 
@@ -92,7 +113,7 @@ def test_cpp_plugin_id_and_label():
 
 def test_python_discover_returns_catalog():
     p = PythonPlugin()
-    cat = p.discover()
+    cat = p.discover(fixture_dir="tests/fixtures")
     assert isinstance(cat, PluginCatalog)
     assert cat.plugin == "python"
     assert len(cat.versions) > 0
@@ -101,7 +122,7 @@ def test_python_discover_returns_catalog():
 
 def test_rust_discover_returns_catalog():
     p = RustPlugin()
-    cat = p.discover()
+    cat = p.discover(fixture_dir="tests/fixtures")
     assert isinstance(cat, PluginCatalog)
     assert cat.plugin == "rust"
     assert len(cat.versions) > 0
@@ -109,7 +130,7 @@ def test_rust_discover_returns_catalog():
 
 def test_go_discover_returns_catalog():
     p = GoPlugin()
-    cat = p.discover()
+    cat = p.discover(fixture_dir="tests/fixtures")
     assert isinstance(cat, PluginCatalog)
     assert cat.plugin == "go"
     assert len(cat.versions) > 0
@@ -127,7 +148,7 @@ def test_go_discover_with_fixtures():
 
 def test_cpp_discover_returns_catalog():
     p = CppPlugin()
-    cat = p.discover()
+    cat = p.discover(fixture_dir="tests/fixtures")
     assert isinstance(cat, PluginCatalog)
     assert cat.plugin == "cpp"
     assert len(cat.versions) > 0
@@ -138,7 +159,7 @@ def test_cpp_discover_returns_catalog():
 
 def test_plugin_coder_parameters():
     for plugin in [PythonPlugin(), RustPlugin(), GoPlugin(), CppPlugin()]:
-        cat = plugin.discover()
+        cat = plugin.discover(fixture_dir="tests/fixtures")
         params = plugin.coder_parameters(cat)
         assert isinstance(params, list)
         for param in params:
@@ -149,7 +170,7 @@ def test_plugin_coder_parameters():
 
 def test_python_coder_parameters_has_condition():
     p = PythonPlugin()
-    cat = p.discover()
+    cat = p.discover(fixture_dir="tests/fixtures")
     params = p.coder_parameters(cat)
     conditions = [param.condition for param in params if param.condition]
     assert any("python" in c for c in conditions if c)
@@ -157,7 +178,7 @@ def test_python_coder_parameters_has_condition():
 
 def test_go_coder_parameters_has_condition():
     p = GoPlugin()
-    cat = p.discover()
+    cat = p.discover(fixture_dir="tests/fixtures")
     params = p.coder_parameters(cat)
     conditions = [param.condition for param in params if param.condition]
     assert any("go" in c for c in conditions if c)
@@ -304,11 +325,10 @@ def test_rust_runtime_plan_isolation():
 def test_go_runtime_plan_uses_selected_gopls_version():
     plugin = load_plugins(["go"])[0]
     plan = plugin.runtime_plan(
-        {
-            "version": "1.22.12",
-            "tools": ["gopls"],
-            "gopls_version": "v0.16.2",
-        }
+        _go_selection(
+            tools=["gopls"],
+            gopls_version="v0.16.2",
+        )
     )
     commands = [" ".join(action.command) for action in plan.actions if action.command]
     assert any("golang.org/x/tools/gopls@v0.16.2" in cmd for cmd in commands)
@@ -317,7 +337,7 @@ def test_go_runtime_plan_uses_selected_gopls_version():
 
 def test_go_runtime_plan_download_and_extract():
     plugin = load_plugins(["go"])[0]
-    plan = plugin.runtime_plan({"version": "1.22.12", "tools": ["gopls"]})
+    plan = plugin.runtime_plan(_go_selection(tools=["gopls"]))
     action_types = [a.type for a in plan.actions]
     assert "download" in action_types
     assert "extract_tar" in action_types
@@ -325,14 +345,29 @@ def test_go_runtime_plan_download_and_extract():
 
 def test_go_runtime_plan_download_url():
     plugin = load_plugins(["go"])[0]
-    plan = plugin.runtime_plan({"version": "1.22.12"})
+    plan = plugin.runtime_plan(_go_selection())
     dl = [a for a in plan.actions if a.type == "download"][0]
     assert "go1.22.12.linux-amd64.tar.gz" in dl.values["url"]
 
 
+def test_go_runtime_plan_requires_real_sha256_when_downloading():
+    plugin = load_plugins(["go"])[0]
+    sha256 = GO_1_22_12_SHA256
+    plan = plugin.runtime_plan(_go_selection(sha256=sha256))
+    dl = [a for a in plan.actions if a.type == "download"][0]
+    assert dl.values["sha256"] == sha256
+    assert "auto" not in str(dl.values)
+
+
+def test_go_runtime_plan_missing_sha256_fails_fast():
+    plugin = load_plugins(["go"])[0]
+    with pytest.raises(ValueError, match="sha256"):
+        plugin.runtime_plan({"version": "1.22.12"})
+
+
 def test_go_runtime_plan_env_vars():
     plugin = load_plugins(["go"])[0]
-    plan = plugin.runtime_plan({"version": "1.22.12"})
+    plan = plugin.runtime_plan(_go_selection())
     assert plan.env["GOROOT"] == "/workspace/.cdev/toolchains/go/1.22.12"
     assert plan.env["GOBIN"] == "/workspace/.cdev/toolchains/go/bin"
     assert plan.env["GOCACHE"] == "/workspace/.cdev/cache/go/build"
@@ -342,7 +377,7 @@ def test_go_runtime_plan_env_vars():
 
 def test_go_runtime_plan_extract_creates():
     plugin = load_plugins(["go"])[0]
-    plan = plugin.runtime_plan({"version": "1.22.12"})
+    plan = plugin.runtime_plan(_go_selection())
     extract = [a for a in plan.actions if a.type == "extract_tar"][0]
     assert extract.creates is not None
     assert "/bin/go" in extract.creates
@@ -350,7 +385,7 @@ def test_go_runtime_plan_extract_creates():
 
 def test_go_runtime_plan_no_tools():
     plugin = load_plugins(["go"])[0]
-    plan = plugin.runtime_plan({"version": "1.22.12", "tools": []})
+    plan = plugin.runtime_plan(_go_selection(tools=[]))
     commands = [" ".join(action.command) for action in plan.actions if action.command]
     assert not any("golang.org/x/tools/gopls" in cmd for cmd in commands)
     assert not any("github.com/go-delve" in cmd for cmd in commands)
@@ -359,11 +394,10 @@ def test_go_runtime_plan_no_tools():
 def test_go_runtime_plan_with_dlv():
     plugin = load_plugins(["go"])[0]
     plan = plugin.runtime_plan(
-        {
-            "version": "1.22.12",
-            "tools": ["gopls", "dlv"],
-            "dlv_version": "v1.23.0",
-        }
+        _go_selection(
+            tools=["gopls", "dlv"],
+            dlv_version="v1.23.0",
+        )
     )
     commands = [" ".join(action.command) for action in plan.actions if action.command]
     assert any("dlv@v1.23.0" in cmd for cmd in commands)
@@ -371,14 +405,14 @@ def test_go_runtime_plan_with_dlv():
 
 def test_go_runtime_plan_path_prepend_actions():
     plugin = load_plugins(["go"])[0]
-    plan = plugin.runtime_plan({"version": "1.22.12"})
+    plan = plugin.runtime_plan(_go_selection())
     path_actions = [a for a in plan.actions if a.type == "path_prepend"]
     assert len(path_actions) >= 2
 
 
 def test_go_runtime_plan_tools_as_string():
     plugin = load_plugins(["go"])[0]
-    plan = plugin.runtime_plan({"version": "1.22.12", "tools": "gopls"})
+    plan = plugin.runtime_plan(_go_selection(tools="gopls"))
     commands = [" ".join(action.command) for action in plan.actions if action.command]
     assert any("golang.org/x/tools/gopls" in cmd for cmd in commands)
 
@@ -440,7 +474,7 @@ def test_cpp_non_prebundled_has_path_prepend():
 def test_all_plugins_return_runtime_plan():
     plugins = load_plugins(["python", "rust", "go", "cpp"])
     for plugin in plugins:
-        plan = plugin.runtime_plan({"version": "1.0", "toolchain": "stable"})
+        plan = plugin.runtime_plan(_selection_for(plugin.id))
         assert isinstance(plan, RuntimePlan)
         assert plan.plugin == plugin.id
         assert isinstance(plan.actions, list)
@@ -450,7 +484,7 @@ def test_all_plugins_return_runtime_plan():
 def test_all_plugins_actions_have_ids():
     plugins = load_plugins(["python", "rust", "go", "cpp"])
     for plugin in plugins:
-        plan = plugin.runtime_plan({"version": "1.0", "toolchain": "stable"})
+        plan = plugin.runtime_plan(_selection_for(plugin.id))
         for action in plan.actions:
             assert isinstance(action, RuntimeAction)
             assert action.id, f"empty action id in {plugin.id}"
@@ -460,7 +494,7 @@ def test_all_plugins_actions_have_ids():
 def test_all_plugins_action_ids_are_unique():
     plugins = load_plugins(["python", "rust", "go", "cpp"])
     for plugin in plugins:
-        plan = plugin.runtime_plan({"version": "1.0", "toolchain": "stable"})
+        plan = plugin.runtime_plan(_selection_for(plugin.id))
         ids = [a.id for a in plan.actions]
         assert len(ids) == len(set(ids)), f"duplicate action ids in {plugin.id}: {ids}"
 
@@ -468,15 +502,31 @@ def test_all_plugins_action_ids_are_unique():
 def test_all_plugins_no_shared_cache_root():
     plugins = load_plugins(["python", "rust", "go", "cpp"])
     for plugin in plugins:
-        plan = plugin.runtime_plan({"version": "1.0", "toolchain": "stable"})
+        plan = plugin.runtime_plan(_selection_for(plugin.id))
         text = str(plan.env) + str(plan.actions)
         assert "/opt/cde/cache" not in text, f"{plugin.id} references shared cache"
+
+
+def test_runtime_plans_do_not_emit_auto_placeholders():
+    plugins = load_plugins(["python", "rust", "go", "cpp"])
+    selections = {
+        "python": {"version": "3.13"},
+        "rust": {"toolchain": "stable"},
+        "go": {
+            "version": "1.22.12",
+            "sha256": "4fa4f869b0f7fc6bb1eb2660e74657fbf04cdd290b5aef905585c86051b34d43",
+        },
+        "cpp": {"llvm": "22"},
+    }
+    for plugin in plugins:
+        plan = plugin.runtime_plan(selections[plugin.id])
+        assert "auto" not in str(plan)
 
 
 def test_all_plugins_workspace_cdev_in_all_actions():
     plugins = load_plugins(["python", "rust", "go", "cpp"])
     for plugin in plugins:
-        plan = plugin.runtime_plan({"version": "1.0", "toolchain": "stable"})
+        plan = plugin.runtime_plan(_selection_for(plugin.id))
         for action in plan.actions:
             text = (
                 str(action.values)

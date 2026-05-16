@@ -5,6 +5,7 @@ ARG NODE_VERSION
 ARG UV_VERSION
 ARG CODE_SERVER_VERSION
 ARG SCCACHE_VERSION
+ARG SCCACHE_ASSET
 ARG SCCACHE_SHA256
 ARG LLVM_VERSION
 
@@ -75,22 +76,22 @@ RUN set -eux; \
     chmod -R a+w /usr/local/rustup /usr/local/cargo; \
     rustup --version; rustc --version
 
-# Install sccache only when SHA256 is provided (guard against empty string)
+# Install sccache only when the catalog resolved an exact release asset.
 RUN set -eux; \
-    if [ -n "${SCCACHE_SHA256}" ] && [ -n "${SCCACHE_VERSION}" ]; then \
-      arch="$(dpkg --print-architecture)"; \
-      case "$arch" in amd64) sccache_arch=x86_64-unknown-linux-musl ;; arm64) sccache_arch=aarch64-unknown-linux-musl ;; *) exit 1 ;; esac; \
-      file="sccache-v${SCCACHE_VERSION}-${sccache_arch}.tar.gz"; \
-      url="https://github.com/rust-lang/sccache/releases/download/v${SCCACHE_VERSION}/${file}"; \
+    if [ -n "${SCCACHE_SHA256}" ] && [ -n "${SCCACHE_VERSION}" ] && [ -n "${SCCACHE_ASSET}" ]; then \
+      file="${SCCACHE_ASSET}"; \
+      url="https://github.com/mozilla/sccache/releases/download/v${SCCACHE_VERSION}/${file}"; \
       curl -fsSLo "/tmp/${file}" "$url"; \
       echo "${SCCACHE_SHA256}  /tmp/${file}" | sha256sum -c -; \
       mkdir -p /tmp/sccache; \
       tar -xzf "/tmp/${file}" --strip-components=1 -C /tmp/sccache; \
-      install -m 0755 /tmp/sccache/sccache /usr/local/bin/sccache; \
+      sccache_bin="$(find /tmp/sccache -type f -name sccache -perm /111 -print -quit)"; \
+      test -n "$sccache_bin"; \
+      install -m 0755 "$sccache_bin" /usr/local/bin/sccache; \
       rm -rf "/tmp/${file}" /tmp/sccache; \
       sccache --version; \
     else \
-      echo "sccache skipped: SCCACHE_SHA256 or SCCACHE_VERSION not set"; \
+      echo "sccache skipped: SCCACHE_VERSION, SCCACHE_ASSET, or SCCACHE_SHA256 not set"; \
     fi
 
 # Install LLVM toolchain only when LLVM_VERSION is provided

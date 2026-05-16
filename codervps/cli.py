@@ -74,11 +74,12 @@ def cmd_refresh_catalog(args: argparse.Namespace) -> int:
 
     from .catalog import refresh_catalog
     from .config import load_toolchains_config
+    from .discovery import DiscoveryError
 
     try:
         cfg = load_toolchains_config(Path("config/toolchains.toml"))
         catalog = refresh_catalog(cfg, fixture_dir=fixture_dir)
-    except (OSError, ValueError, KeyError) as exc:
+    except (DiscoveryError, OSError, ValueError, KeyError) as exc:
         _fail(f"catalog refresh failed: {exc}")
         return 1
 

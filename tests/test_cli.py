@@ -95,6 +95,22 @@ def test_refresh_catalog_custom_output(tmp_path, monkeypatch, capsys):
     assert out_path.exists()
 
 
+def test_refresh_catalog_discovery_error_exits_without_traceback(tmp_path, monkeypatch, capsys):
+    from codervps.discovery import DiscoveryError
+
+    def fail_refresh(*_args, **_kwargs):
+        raise DiscoveryError("upstream timed out")
+
+    monkeypatch.chdir(Path("/home/hp/Projects/OpenSource/CoderVPS"))
+    monkeypatch.setattr("codervps.catalog.refresh_catalog", fail_refresh)
+    with pytest.raises(SystemExit) as exc_info:
+        main(["refresh-catalog", "--output", str(tmp_path / "catalog.json")])
+    err = capsys.readouterr().err
+    assert exc_info.value.code == 1
+    assert "catalog refresh failed: upstream timed out" in err
+    assert "Traceback" not in err
+
+
 # ---- Render-generated command (pastured) ----
 
 

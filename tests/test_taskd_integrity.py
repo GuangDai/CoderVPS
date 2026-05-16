@@ -56,6 +56,11 @@ def test_catalog_has_no_fake_sha256():
     assert "resolved-sccache-release-sha256" not in text, "catalog.py has FORBIDDEN fake SHA256"
 
 
+def test_catalog_does_not_hardcode_date_pinned_base_tag():
+    text = Path(ROOT / "codervps/catalog.py").read_text()
+    assert "ubuntu-noble-20260511" not in text
+
+
 # ---- 1B: Empty plugin version lists have TODO annotations ----
 
 
@@ -126,8 +131,9 @@ def test_catalog_imports_discovery_functions():
     assert "code_server_version" in source, (
         "catalog.py should import code_server_version from discovery"
     )
-    assert "sccache_version_and_sha256" in source, (
-        "catalog.py should import sccache_version_and_sha256 from discovery"
+    assert "sccache_release" in source, "catalog.py should import sccache_release from discovery"
+    assert "latest_coder_base_tag" in source, (
+        "catalog.py should import latest_coder_base_tag from discovery"
     )
 
 
@@ -159,16 +165,10 @@ def test_dockerfile_has_node_version_guard():
 
 
 def test_template_imports_languages_from_extensions():
-    """template.py should import _LANGUAGES from extensions instead of hardcoding."""
+    """template.py should import the canonical language list instead of hardcoding."""
     source = Path(ROOT / "codervps/render/template.py").read_text()
-    # Either imports _LANGUAGES or uses the extensions.LANGUAGES pattern
-    has_import = "from codervps.render.extensions import _LANGUAGES" in source
-    has_correct_import = "from .extensions import _LANGUAGES" in source
-    # If it still has the literal hardcoded ["python", "rust", "go", "cpp"] on line 94...
-    has_hardcoded_in_for = 'for plugin_id in ["python", "rust", "go", "cpp"]' in source
-    assert has_import or has_correct_import or not has_hardcoded_in_for, (
-        "template.py should import _LANGUAGES from extensions.py instead of hardcoding list"
-    )
+    assert "from codervps.languages import LANGUAGE_IDS" in source
+    assert 'for plugin_id in ["python", "rust", "go", "cpp"]' not in source
 
 
 # ---- 1G: extra_extension_packs test exists ----

@@ -33,10 +33,14 @@ Images are tagged as:
 ghcr.io/guangdai/codervps-devbox:noble-YYYYMMDD-node<major>
 ```
 
-Example: `noble-20260511-node24`
+Example shape: `noble-YYYYMMDD-node24`
 
 Date tags are immutable. The Coder template uses tags from `images.json`, not
 floating `latest` tags.
+
+Toolchain and base-image metadata is resolved by `refresh-catalog`; see
+[`docs/catalog-discovery.md`](docs/catalog-discovery.md) for the authoritative
+sources and sccache asset policy.
 
 ## VPS Operations (`cdev`)
 
