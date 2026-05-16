@@ -120,7 +120,8 @@ RUN --mount=type=cache,id=codervps-apt-cache,target=/var/cache/apt,sharing=locke
     fi
 
 RUN set -eux; \
-    xmake --version
+    XMAKE_ROOT=y xmake --version
+
 
 RUN set -eux; \
     mkdir -p /workspace /opt/cde/runtime /opt/cde/extensions /opt/cde/vsix /home/coder/.local/bin; \
