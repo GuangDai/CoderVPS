@@ -315,16 +315,16 @@ def _startup_script_hcl() -> str:
     #!/usr/bin/env bash
     set -Eeuo pipefail
 
+    log() {{
+      printf '[codervps-startup] %s\\n' "$*"
+    }}
+
     export HOME="{HOME_DIR}"
     export CDEV_RUNTIME_ROOT="{CDEV_RUNTIME_ROOT}"
     export RUNTIME_LIB_DIR="/opt/cde/runtime/lib"
     export CDEV_SELECTION_JSON='${{jsonencode(local.cdev_selection)}}'
 
     mkdir -p "{PROJECT_DIR}" "$HOME/.config/code-server" "$CDEV_RUNTIME_ROOT"
-
-    if [ -f /opt/cde/runtime/startup.sh ]; then
-      bash /opt/cde/runtime/startup.sh
-    fi
 
     cat > "$HOME/.config/code-server/config.yaml" <<'YAML'
     bind-addr: 127.0.0.1:13337
@@ -333,6 +333,8 @@ def _startup_script_hcl() -> str:
     YAML
 
     if command -v code-server >/dev/null 2>&1; then
+      log "Starting code-server"
+      code-server --version || true
       pkill -f 'code-server.*13337' >/dev/null 2>&1 || true
       nohup code-server \\
         --auth none \\
@@ -341,8 +343,26 @@ def _startup_script_hcl() -> str:
         --bind-addr 127.0.0.1:13337 \\
         "{PROJECT_DIR}" \\
         > /tmp/code-server.log 2>&1 &
+      for _ in $(seq 1 60); do
+        if curl -fsS http://127.0.0.1:13337/healthz >/dev/null 2>&1; then
+          log "code-server is healthy"
+          break
+        fi
+        sleep 0.5
+      done
+      if ! curl -fsS http://127.0.0.1:13337/healthz >/dev/null 2>&1; then
+        log "code-server did not become healthy"
+        tail -n 80 /tmp/code-server.log >&2 || true
+        exit 1
+      fi
     else
       echo "code-server not found in PATH" >&2
+      exit 1
+    fi
+
+    if [ -f /opt/cde/runtime/startup.sh ]; then
+      log "Running CoderVPS runtime startup"
+      bash /opt/cde/runtime/startup.sh
     fi
   EOT"""
 

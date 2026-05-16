@@ -111,3 +111,19 @@ def test_hcl_startup_script_starts_code_server_from_agent():
     assert "--bind-addr 127.0.0.1:13337" in text
     assert '"/home/coder/workspace"' in text
     assert 'export CDEV_RUNTIME_ROOT="/home/coder/.cdev"' in text
+
+
+def test_hcl_starts_code_server_before_runtime_bootstrap():
+    text = render_main_tf_hcl(images={"images": []}, catalog=_catalog())
+
+    code_server_start = text.index("Starting code-server")
+    runtime_start = text.index("Running CoderVPS runtime startup")
+    assert code_server_start < runtime_start
+
+
+def test_hcl_code_server_startup_has_health_diagnostics():
+    text = render_main_tf_hcl(images={"images": []}, catalog=_catalog())
+
+    assert "code-server did not become healthy" in text
+    assert "tail -n 80 /tmp/code-server.log" in text
+    assert "curl -fsS http://127.0.0.1:13337/healthz" in text
