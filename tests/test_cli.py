@@ -14,6 +14,9 @@ import pytest
 from codervps.cli import COMMANDS, build_parser, main
 
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
 # ---- Version ----
 
 
@@ -64,7 +67,7 @@ def test_commands_are_callable():
 def test_validate_returns_zero(monkeypatch, tmp_path, capsys):
     """Real validate checks config files exist and are loadable."""
     # We need config files to exist for validate to pass
-    monkeypatch.chdir(Path("/home/hp/Projects/OpenSource/CoderVPS"))
+    monkeypatch.chdir(REPO_ROOT)
     rc = main(["validate"])
     out = capsys.readouterr().out.strip()
     assert rc == 0
@@ -76,7 +79,7 @@ def test_validate_returns_zero(monkeypatch, tmp_path, capsys):
 
 def test_refresh_catalog_writes_file(monkeypatch, tmp_path, capsys):
     """Real refresh-catalog writes catalog JSON."""
-    monkeypatch.chdir(Path("/home/hp/Projects/OpenSource/CoderVPS"))
+    monkeypatch.chdir(REPO_ROOT)
     out_path = tmp_path / "catalog.json"
     rc = main(["refresh-catalog", "--output", str(out_path), "--fixture-dir", "tests/fixtures"])
     capsys.readouterr()
@@ -89,7 +92,7 @@ def test_refresh_catalog_writes_file(monkeypatch, tmp_path, capsys):
 
 def test_refresh_catalog_custom_output(tmp_path, monkeypatch, capsys):
     out_path = tmp_path / "custom" / "catalog.json"
-    monkeypatch.chdir(Path("/home/hp/Projects/OpenSource/CoderVPS"))
+    monkeypatch.chdir(REPO_ROOT)
     rc = main(["refresh-catalog", "--output", str(out_path), "--fixture-dir", "tests/fixtures"])
     assert rc == 0
     assert out_path.exists()
@@ -101,7 +104,7 @@ def test_refresh_catalog_discovery_error_exits_without_traceback(tmp_path, monke
     def fail_refresh(*_args, **_kwargs):
         raise DiscoveryError("upstream timed out")
 
-    monkeypatch.chdir(Path("/home/hp/Projects/OpenSource/CoderVPS"))
+    monkeypatch.chdir(REPO_ROOT)
     monkeypatch.setattr("codervps.catalog.refresh_catalog", fail_refresh)
     with pytest.raises(SystemExit) as exc_info:
         main(["refresh-catalog", "--output", str(tmp_path / "catalog.json")])
@@ -115,7 +118,7 @@ def test_refresh_catalog_discovery_error_exits_without_traceback(tmp_path, monke
 
 
 def test_render_generated_with_catalog(tmp_path, monkeypatch, capsys):
-    monkeypatch.chdir(Path("/home/hp/Projects/OpenSource/CoderVPS"))
+    monkeypatch.chdir(REPO_ROOT)
     # Create a minimal catalog file
     catalog = tmp_path / "cat.json"
     catalog.write_text(
@@ -144,7 +147,7 @@ def test_render_generated_missing_catalog_exits_nonzero(tmp_path):
 
 
 def test_render_generated_with_write_images_json(tmp_path, monkeypatch):
-    monkeypatch.chdir(Path("/home/hp/Projects/OpenSource/CoderVPS"))
+    monkeypatch.chdir(REPO_ROOT)
     catalog = tmp_path / "cat.json"
     images = tmp_path / "imgs.json"
     catalog.write_text(
@@ -191,7 +194,7 @@ def test_render_generated_unrecognized_flag_exits():
 
 
 def test_build_matrix_json_default(tmp_path, capsys, monkeypatch):
-    monkeypatch.chdir(Path("/home/hp/Projects/OpenSource/CoderVPS"))
+    monkeypatch.chdir(REPO_ROOT)
     catalog = tmp_path / "cat.json"
     catalog.write_text(
         json.dumps(
@@ -210,7 +213,7 @@ def test_build_matrix_json_default(tmp_path, capsys, monkeypatch):
 
 
 def test_build_matrix_github_output(tmp_path, capsys, monkeypatch):
-    monkeypatch.chdir(Path("/home/hp/Projects/OpenSource/CoderVPS"))
+    monkeypatch.chdir(REPO_ROOT)
     catalog = tmp_path / "cat.json"
     catalog.write_text(
         json.dumps(
