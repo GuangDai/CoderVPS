@@ -38,7 +38,7 @@ RUN --mount=type=cache,id=codervps-apt-cache,target=/var/cache/apt,sharing=locke
 # Install code-server only when version is provided
 RUN set -eux; \
     if [ -n "${CODE_SERVER_VERSION}" ]; then \
-      curl -fsSL https://code-server.dev/install.sh | sh -s -- --version "${CODE_SERVER_VERSION}"; \
+      curl -fsSL https://code-server.dev/install.sh | sh -s -- --method standalone --prefix /usr/local --version "${CODE_SERVER_VERSION}"; \
       code-server --version; \
     else \
       echo "code-server skipped: CODE_SERVER_VERSION not set"; \
