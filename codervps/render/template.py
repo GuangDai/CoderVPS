@@ -326,11 +326,11 @@ def _startup_script_hcl() -> str:
 
     mkdir -p "{PROJECT_DIR}" "$HOME/.config/code-server" "$CDEV_RUNTIME_ROOT"
 
-    cat > "$HOME/.config/code-server/config.yaml" <<'YAML'
-    bind-addr: 127.0.0.1:13337
-    auth: none
-    cert: false
-    YAML
+    printf '%s\\n' \\
+      'bind-addr: 127.0.0.1:13337' \\
+      'auth: none' \\
+      'cert: false' \\
+      > "$HOME/.config/code-server/config.yaml"
 
     if command -v code-server >/dev/null 2>&1; then
       log "Starting code-server"

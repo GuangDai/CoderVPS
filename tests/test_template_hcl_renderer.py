@@ -127,3 +127,11 @@ def test_hcl_code_server_startup_has_health_diagnostics():
     assert "code-server did not become healthy" in text
     assert "tail -n 80 /tmp/code-server.log" in text
     assert "curl -fsS http://127.0.0.1:13337/healthz" in text
+
+
+def test_hcl_code_server_config_does_not_use_nested_shell_heredoc():
+    text = render_main_tf_hcl(images={"images": []}, catalog=_catalog())
+
+    assert "<<'YAML'" not in text
+    assert "printf '%s\\n'" in text
+    assert "bind-addr: 127.0.0.1:13337" in text
