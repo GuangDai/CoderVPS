@@ -75,6 +75,7 @@ def refresh_catalog(cfg: ToolchainsConfig, fixture_dir: Path | None = None) -> d
     sccache_sha256 = sccache_info["sha256"]
     explicit_llvm = cfg.overrides.get("llvm_prebundle")
     selected_llvm = explicit_llvm or _default_llvm_prebundle(cpp_vers)
+    default_python = _default_python_version(python_vers, cfg.python_default)
     default_go = _default_go_version(go_versions, cfg.go_default)
     default_cpp_llvm = selected_llvm if cfg.cpp_default_llvm == "latest" else cfg.cpp_default_llvm
 
@@ -97,7 +98,7 @@ def refresh_catalog(cfg: ToolchainsConfig, fixture_dir: Path | None = None) -> d
             }
         },
         "plugins": {
-            "python": {"versions": python_vers, "defaults": {"version": cfg.python_default}},
+            "python": {"versions": python_vers, "defaults": {"version": default_python}},
             "rust": {"versions": rust_vers, "defaults": {"toolchain": cfg.rust_default}},
             "go": {"versions": go_versions, "defaults": {"version": default_go}},
             "cpp": {"versions": cpp_vers, "defaults": {"llvm": default_cpp_llvm}},
@@ -129,6 +130,24 @@ def _default_llvm_prebundle(versions: list[dict]) -> str:
     if versions:
         return str(versions[0]["version"])
     raise ValueError("cannot choose LLVM prebundle version from empty discovery result")
+
+
+def _default_python_version(versions: list[dict], configured_default: str) -> str:
+    if configured_default not in {"latest"} and "@" in configured_default:
+        return configured_default
+    for version in versions:
+        if (
+            version.get("implementation") == "cpython"
+            and version.get("variant") == "default"
+            and version.get("minor") == configured_default
+        ):
+            return str(version["request"])
+    for version in versions:
+        if version.get("implementation") == "cpython" and version.get("variant") == "default":
+            return str(version["request"])
+    if versions:
+        return str(versions[0]["request"])
+    raise ValueError("cannot choose Python default version from empty discovery result")
 
 
 def _default_go_version(versions: list[dict], configured_default: str) -> str:

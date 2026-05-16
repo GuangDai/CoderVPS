@@ -17,23 +17,38 @@ class PythonPlugin:
         )
         versions = [
             VersionEntry(
-                value=entry["version"],
-                label=f"Python {entry['version']}",
+                value=entry["request"],
+                label=entry["label"],
                 status=entry["status"],
-                default=entry["version"] == "3.13",
+                default=(
+                    entry["implementation"] == "cpython"
+                    and entry["minor"] == "3.13"
+                    and entry["variant"] == "default"
+                ),
+                metadata={
+                    "implementation": entry["implementation"],
+                    "version": entry["version"],
+                    "minor": entry["minor"],
+                    "variant": entry["variant"],
+                    "uv_key": entry["uv_key"],
+                },
             )
             for entry in entries
         ]
-        return PluginCatalog(plugin=self.id, versions=versions, defaults={"version": "3.13"})
+        default = next(
+            (entry.value for entry in versions if entry.default),
+            versions[0].value if versions else "cpython@3.13",
+        )
+        return PluginCatalog(plugin=self.id, versions=versions, defaults={"version": default})
 
     def coder_parameters(self, catalog: PluginCatalog) -> list[ParameterSpec]:
         return [
             ParameterSpec(
                 name="python_version",
-                display_name="Python Version",
+                display_name="Python Runtime",
                 type="string",
                 form_type="dropdown",
-                default="3.13",
+                default=catalog.defaults.get("version", "cpython@3.13"),
                 mutable=False,
                 order=10,
                 condition='contains(data.coder_parameter.languages.value, "python")',

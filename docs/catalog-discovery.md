@@ -13,8 +13,12 @@ consumed by image builds or runtime installers.
 - Node.js: `https://nodejs.org/dist/index.json`.
 - Go: `https://go.dev/dl/?mode=json&include=all`; the Linux amd64 archive
   SHA256 is copied into each Go version entry.
-- Python: `uv python list --only-downloads --all-versions --output-format json`;
-  prereleases are excluded and legacy installable CPython minors are retained.
+- Python: `uv python list --only-downloads --all-versions --output-format json`.
+  The catalog keeps the latest downloadable Linux x86_64 GNU entry per
+  implementation/minor/variant for CPython, PyPy, and GraalPy. Runtime values
+  use stable uv request strings such as `cpython@3.13.13`,
+  `cpython@3.13.13+freethreaded`, `pypy@3.11.15`, and `graalpy@3.12.0`.
+  The raw uv list key is stored only as `uv_key` metadata for traceability.
 - Rust: `https://static.rust-lang.org/dist/channel-rust-stable.toml`; stable,
   beta, nightly, and recent stable minor channels are derived from the stable
   manifest.

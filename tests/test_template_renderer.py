@@ -269,6 +269,7 @@ def test_code_server_app():
     assert app["display_name"] == "VS Code Web"
     assert app["share"] == "owner"
     assert app["subdomain"] is False
+    assert app["open_in"] == "tab"
     assert "13337" in app["url"]
 
 

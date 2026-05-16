@@ -11,10 +11,43 @@
     "libc": "gnu"
   },
   {
+    "key": "cpython-3.15.0a8+freethreaded-linux-x86_64-gnu",
+    "version": "3.15.0a8",
+    "version_parts": {"major": 3, "minor": 15, "patch": 0},
+    "url": "https://releases.astral.sh/github/python-build-standalone/releases/download/20260504/cpython-3.15.0a8+20260504-x86_64-unknown-linux-gnu-freethreaded-install_only_stripped.tar.gz",
+    "os": "linux",
+    "variant": "freethreaded",
+    "implementation": "cpython",
+    "arch": "x86_64",
+    "libc": "gnu"
+  },
+  {
     "key": "cpython-3.13.13-linux-x86_64-gnu",
     "version": "3.13.13",
     "version_parts": {"major": 3, "minor": 13, "patch": 13},
     "url": "https://releases.astral.sh/github/python-build-standalone/releases/download/20260504/cpython-3.13.13+20260504-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz",
+    "os": "linux",
+    "variant": "default",
+    "implementation": "cpython",
+    "arch": "x86_64",
+    "libc": "gnu"
+  },
+  {
+    "key": "cpython-3.13.13+freethreaded-linux-x86_64-gnu",
+    "version": "3.13.13",
+    "version_parts": {"major": 3, "minor": 13, "patch": 13},
+    "url": "https://releases.astral.sh/github/python-build-standalone/releases/download/20260504/cpython-3.13.13+20260504-x86_64-unknown-linux-gnu-freethreaded-install_only_stripped.tar.gz",
+    "os": "linux",
+    "variant": "freethreaded",
+    "implementation": "cpython",
+    "arch": "x86_64",
+    "libc": "gnu"
+  },
+  {
+    "key": "cpython-3.13.12-linux-x86_64-gnu",
+    "version": "3.13.12",
+    "version_parts": {"major": 3, "minor": 13, "patch": 12},
+    "url": "https://releases.astral.sh/github/python-build-standalone/releases/download/20260325/cpython-3.13.12+20260325-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz",
     "os": "linux",
     "variant": "default",
     "implementation": "cpython",
@@ -29,6 +62,28 @@
     "os": "linux",
     "variant": "default",
     "implementation": "cpython",
+    "arch": "x86_64",
+    "libc": "gnu"
+  },
+  {
+    "key": "pypy-3.11.15-linux-x86_64-gnu",
+    "version": "3.11.15",
+    "version_parts": {"major": 3, "minor": 11, "patch": 15},
+    "url": "https://downloads.python.org/pypy/pypy3.11-v7.3.22-linux64.tar.bz2",
+    "os": "linux",
+    "variant": "default",
+    "implementation": "pypy",
+    "arch": "x86_64",
+    "libc": "gnu"
+  },
+  {
+    "key": "graalpy-3.12.0-linux-x86_64-gnu",
+    "version": "3.12.0",
+    "version_parts": {"major": 3, "minor": 12, "patch": 0},
+    "url": "https://github.com/oracle/graalpython/releases/download/graal-25.0.2/graalpy-25.0.2-linux-amd64.tar.gz",
+    "os": "linux",
+    "variant": "default",
+    "implementation": "graalpy",
     "arch": "x86_64",
     "libc": "gnu"
   },

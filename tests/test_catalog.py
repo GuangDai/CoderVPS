@@ -190,7 +190,7 @@ def test_refresh_catalog_has_generated_at():
 def test_refresh_catalog_plugin_defaults():
     cfg = load_toolchains_config(Path("config/toolchains.toml"))
     catalog = refresh_catalog(cfg, fixture_dir=Path("tests/fixtures"))
-    assert catalog["plugins"]["python"]["defaults"]["version"] == "3.13"
+    assert catalog["plugins"]["python"]["defaults"]["version"] == "cpython@3.13.13"
     assert catalog["plugins"]["rust"]["defaults"]["toolchain"] == "stable"
     assert catalog["plugins"]["go"]["defaults"]["version"] == "1.26.3"
     assert catalog["plugins"]["cpp"]["defaults"]["llvm"] == "22"
@@ -231,11 +231,18 @@ def test_refresh_catalog_go_versions_have_sha256():
 def test_refresh_catalog_populates_language_versions_from_discovery():
     cfg = load_toolchains_config(Path("config/toolchains.toml"))
     catalog = refresh_catalog(cfg, fixture_dir=Path("tests/fixtures"))
-    assert [item["version"] for item in catalog["plugins"]["python"]["versions"]] == [
-        "3.13",
-        "3.12",
-        "3.8",
+    python_versions = catalog["plugins"]["python"]["versions"]
+    python_requests = [item["request"] for item in python_versions]
+    assert python_requests[:7] == [
+        "cpython@3.15.0a8",
+        "cpython@3.15.0a8+freethreaded",
+        "cpython@3.13.13",
+        "cpython@3.13.13+freethreaded",
+        "cpython@3.12.13",
+        "graalpy@3.12.0",
+        "pypy@3.11.15",
     ]
+    assert "cpython@3.13.12" not in python_requests
     assert [item["version"] for item in catalog["plugins"]["rust"]["versions"][:6]] == [
         "stable",
         "beta",
@@ -264,10 +271,29 @@ def test_tool_discovery_uses_release_fixtures():
 
 
 def test_language_discovery_functions_parse_fixtures():
-    assert python_versions(fixture_dir=Path("tests/fixtures"), default_minor="3.13")[0] == {
-        "version": "3.13",
-        "status": "active",
+    discovered_python = python_versions(fixture_dir=Path("tests/fixtures"), default_minor="3.13")
+    assert discovered_python[0] == {
+        "label": "CPython 3.15.0a8 preview",
+        "implementation": "cpython",
+        "version": "3.15.0a8",
+        "minor": "3.15",
+        "variant": "default",
+        "request": "cpython@3.15.0a8",
+        "uv_key": "cpython-3.15.0a8-linux-x86_64-gnu",
+        "status": "preview",
     }
+    assert {
+        "label": "CPython 3.13.13 free-threaded",
+        "implementation": "cpython",
+        "version": "3.13.13",
+        "minor": "3.13",
+        "variant": "freethreaded",
+        "request": "cpython@3.13.13+freethreaded",
+        "uv_key": "cpython-3.13.13+freethreaded-linux-x86_64-gnu",
+        "status": "active",
+    } in discovered_python
+    assert any(item["request"] == "pypy@3.11.15" for item in discovered_python)
+    assert any(item["request"] == "graalpy@3.12.0" for item in discovered_python)
     assert rust_channels(fixture_dir=Path("tests/fixtures"), stable_minor_count=3)[-1] == {
         "version": "1.89",
         "status": "supported",

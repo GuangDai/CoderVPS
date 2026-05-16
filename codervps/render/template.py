@@ -47,13 +47,12 @@ def _make_extra_packs_options() -> list[dict]:
 
 def _version_options(prefix: str, versions: list[dict], fallback: str) -> list[dict]:
     if versions:
-        return [
-            {
-                "name": f"{prefix} {v.get('version', v.get('value', ''))}",
-                "value": v.get("version", v.get("value", "")),
-            }
-            for v in versions
-        ]
+        options = []
+        for version in versions:
+            value = version.get("request", version.get("version", version.get("value", "")))
+            name = version.get("label", f"{prefix} {version.get('version', value)}")
+            options.append({"name": name, "value": value})
+        return options
     if fallback:
         return [{"name": f"{prefix} {fallback}", "value": fallback}]
     return []
@@ -86,7 +85,7 @@ def _make_language_parameters(catalog: dict) -> dict:
 
             params["python_version"] = {
                 "name": "python_version",
-                "display_name": f"{label} Version",
+                "display_name": f"{label} Runtime",
                 "type": "string",
                 "form_type": "dropdown",
                 "mutable": False,
@@ -281,6 +280,7 @@ def render_main_tf_json(images: dict, catalog: dict) -> dict:
                     "url": "http://127.0.0.1:13337/?folder=/workspace",
                     "share": "owner",
                     "subdomain": False,
+                    "open_in": "tab",
                 }
             },
             "docker_container": {

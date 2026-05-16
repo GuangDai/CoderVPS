@@ -426,3 +426,20 @@ def test_generated_branch_doc_has_all_required_sections():
     assert "main.tf.json" in text
     assert "--force-with-lease" in text
     assert "catalog" in text
+
+
+def test_deployment_guide_has_operator_runbook_sections():
+    text = Path(ROOT / "docs/deployment-guide.md").read_text()
+    required = [
+        "GitHub repository setup",
+        "GitHub Actions",
+        "GHCR",
+        "generated branch",
+        "Local VPS prerequisites",
+        "Install Coder",
+        "cdev sync-generated",
+        "VSIX",
+        "Troubleshooting",
+    ]
+    for requirement in required:
+        assert requirement in text, f"deployment guide missing: {requirement}"

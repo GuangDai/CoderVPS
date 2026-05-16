@@ -42,6 +42,9 @@ Toolchain and base-image metadata is resolved by `refresh-catalog`; see
 [`docs/catalog-discovery.md`](docs/catalog-discovery.md) for the authoritative
 sources and sccache asset policy.
 
+For a full GitHub-to-VPS operator walkthrough, see
+[`docs/deployment-guide.md`](docs/deployment-guide.md).
+
 ## VPS Operations (`cdev`)
 
 The `cdev` script is a thin VPS helper. Key commands:

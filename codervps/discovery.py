@@ -118,6 +118,42 @@ def _minor_tuple(value: str) -> tuple[int, int]:
     return int(major), int(minor)
 
 
+def _python_version_sort(value: str) -> tuple[int, int, int, int, int]:
+    match = re.match(r"^(\d+)\.(\d+)\.(\d+)(?:(a|b|rc)(\d+))?$", value)
+    if not match:
+        raise DiscoveryError(f"cannot parse Python version: {value}")
+    major, minor, patch, phase, phase_num = match.groups()
+    phase_order = {"a": 0, "b": 1, "rc": 2, None: 3}
+    return (
+        int(major),
+        int(minor),
+        int(patch),
+        phase_order[phase],
+        int(phase_num or 0),
+    )
+
+
+def _python_request(implementation: str, version: str, variant: str) -> str:
+    request = f"{implementation}@{version}"
+    if variant != "default":
+        request = f"{request}+{variant}"
+    return request
+
+
+def _python_label(implementation: str, version: str, variant: str, status: str) -> str:
+    implementation_labels = {
+        "cpython": "CPython",
+        "pypy": "PyPy",
+        "graalpy": "GraalPy",
+    }
+    label = f"{implementation_labels[implementation]} {version}"
+    if variant == "freethreaded":
+        label = f"{label} free-threaded"
+    if status == "preview":
+        label = f"{label} preview"
+    return label
+
+
 def _python_download_rows(fixture_dir: Path | None) -> list[dict]:
     fixture = _load_json_fixture(fixture_dir, "python-downloads.json")
     if fixture is not None:
@@ -155,36 +191,76 @@ def python_versions(
     rows = _python_download_rows(fixture_dir)
     minimum = _minor_tuple(min_minor)
     maximum = None if max_minor == "latest" else _minor_tuple(max_minor)
-    newest_by_minor: dict[str, str] = {}
+    selected: dict[tuple[str, str, str], dict] = {}
+    supported_implementations = {"cpython", "pypy", "graalpy"}
+    supported_variants = {"default", "freethreaded"}
     for row in rows:
-        if row.get("implementation") != "cpython":
+        implementation = str(row.get("implementation", ""))
+        variant = str(row.get("variant", "default"))
+        if implementation not in supported_implementations:
             continue
         if row.get("os") != "linux" or row.get("arch") != "x86_64":
             continue
-        if row.get("variant") != "default":
+        if row.get("libc") != "gnu":
+            continue
+        if variant not in supported_variants:
+            continue
+        if variant != "default" and implementation != "cpython":
             continue
         version = str(row.get("version", ""))
-        if re.search(r"[a-zA-Z]", version):
-            continue
         minor = _version_minor(version)
         minor_key = _minor_tuple(minor)
         if minor_key < minimum:
             continue
         if maximum is not None and minor_key > maximum:
             continue
-        if minor not in newest_by_minor:
-            newest_by_minor[minor] = version
+        key = (implementation, minor, variant)
+        current = selected.get(key)
+        if current is None or _python_version_sort(version) > _python_version_sort(
+            str(current["version"])
+        ):
+            selected[key] = row
 
     discovered = []
-    for minor in sorted(newest_by_minor, key=_minor_tuple, reverse=True):
-        if minor == default_minor:
+    for (implementation, minor, variant), row in selected.items():
+        version = str(row["version"])
+        if re.search(r"[a-zA-Z]", version):
+            status = "preview"
+        elif implementation != "cpython":
+            status = "supported"
+        elif minor == default_minor:
             status = "active"
         elif _minor_tuple(minor) >= (3, 11):
             status = "supported"
         else:
             status = "legacy"
-        discovered.append({"version": minor, "status": status})
-    return discovered
+        discovered.append(
+            {
+                "label": _python_label(implementation, version, variant, status),
+                "implementation": implementation,
+                "version": version,
+                "minor": minor,
+                "variant": variant,
+                "request": _python_request(implementation, version, variant),
+                "uv_key": str(row["key"]),
+                "status": status,
+            }
+        )
+
+    implementation_order = {"cpython": 0, "pypy": 1, "graalpy": 2}
+    variant_order = {"default": 0, "freethreaded": 1}
+    return sorted(
+        discovered,
+        key=lambda item: (
+            -_python_version_sort(str(item["version"]))[0],
+            -_python_version_sort(str(item["version"]))[1],
+            -_python_version_sort(str(item["version"]))[2],
+            -_python_version_sort(str(item["version"]))[3],
+            -_python_version_sort(str(item["version"]))[4],
+            implementation_order[str(item["implementation"])],
+            variant_order[str(item["variant"])],
+        ),
+    )
 
 
 def _stable_rust_version(fixture_dir: Path | None) -> str:

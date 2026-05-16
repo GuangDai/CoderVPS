@@ -26,7 +26,7 @@ def _go_selection(**overrides: object) -> dict:
 
 def _selection_for(plugin_id: str) -> dict:
     if plugin_id == "python":
-        return {"version": "3.13"}
+        return {"version": "cpython@3.13.13"}
     if plugin_id == "rust":
         return {"toolchain": "stable"}
     if plugin_id == "go":
@@ -117,7 +117,25 @@ def test_python_discover_returns_catalog():
     assert isinstance(cat, PluginCatalog)
     assert cat.plugin == "python"
     assert len(cat.versions) > 0
-    assert cat.defaults["version"] == "3.13"
+    assert cat.defaults["version"] == "cpython@3.13.13"
+
+
+def test_python_discover_returns_detailed_runtime_options():
+    p = PythonPlugin()
+    cat = p.discover(fixture_dir="tests/fixtures")
+    options = {entry.value: entry for entry in cat.versions}
+    assert options["cpython@3.13.13"].label == "CPython 3.13.13"
+    assert options["cpython@3.13.13+freethreaded"].label == ("CPython 3.13.13 free-threaded")
+    assert options["cpython@3.13.13+freethreaded"].metadata == {
+        "implementation": "cpython",
+        "version": "3.13.13",
+        "minor": "3.13",
+        "variant": "freethreaded",
+        "uv_key": "cpython-3.13.13+freethreaded-linux-x86_64-gnu",
+    }
+    assert options["pypy@3.11.15"].label == "PyPy 3.11.15"
+    assert options["graalpy@3.12.0"].label == "GraalPy 3.12.0"
+    assert options["cpython@3.15.0a8"].status == "preview"
 
 
 def test_rust_discover_returns_catalog():
@@ -189,9 +207,9 @@ def test_go_coder_parameters_has_condition():
 
 def test_python_runtime_plan_uses_workspace_paths():
     plugin = load_plugins(["python"])[0]
-    plan = plugin.runtime_plan({"version": "3.13", "tools": ["ruff", "debugpy"]})
+    plan = plugin.runtime_plan({"version": "cpython@3.13.13", "tools": ["ruff", "debugpy"]})
     commands = [" ".join(action.command) for action in plan.actions if action.command]
-    assert any("uv python install 3.13" in cmd for cmd in commands)
+    assert any("uv python install cpython@3.13.13" in cmd for cmd in commands)
     all_values = [str(action.values) for action in plan.actions]
     all_envs = [str(action.env) for action in plan.actions]
     combined = " ".join(all_values) + " " + str(plan.env) + " " + " ".join(all_envs)
@@ -208,9 +226,18 @@ def test_python_tools_are_individually_selectable():
 
 def test_python_runtime_plan_version_as_number():
     plugin = load_plugins(["python"])[0]
-    plan = plugin.runtime_plan({"version": "3.12"})
+    plan = plugin.runtime_plan({"version": "cpython@3.12.13"})
     commands = [" ".join(action.command) for action in plan.actions if action.command]
-    assert any("3.12" in cmd for cmd in commands)
+    assert any("cpython@3.12.13" in cmd for cmd in commands)
+
+
+def test_python_runtime_plan_uses_stable_uv_request_for_freethreaded():
+    plugin = load_plugins(["python"])[0]
+    plan = plugin.runtime_plan({"version": "cpython@3.13.13+freethreaded"})
+    install = [action for action in plan.actions if action.id == "python-install"][0]
+    verify = [action for action in plan.actions if action.id == "python-verify"][0]
+    assert install.command[:4] == ["uv", "python", "install", "cpython@3.13.13+freethreaded"]
+    assert verify.command == ["uv", "python", "find", "cpython@3.13.13+freethreaded"]
 
 
 def test_python_runtime_plan_no_tools():
