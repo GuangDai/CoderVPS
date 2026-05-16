@@ -108,7 +108,7 @@ def test_hcl_startup_script_starts_code_server_from_agent():
 
     assert "code-server \\" in text
     assert "--auth none" in text
-    assert "--bind-addr 127.0.0.1:13337" in text
+    assert "--bind-addr 0.0.0.0:13337" in text
     assert '"/home/coder/workspace"' in text
     assert 'export CDEV_RUNTIME_ROOT="/home/coder/.cdev"' in text
 
@@ -126,7 +126,7 @@ def test_hcl_code_server_startup_has_health_diagnostics():
 
     assert "code-server did not become healthy" in text
     assert "tail -n 80 /tmp/code-server.log" in text
-    assert "curl -fsS http://127.0.0.1:13337/healthz" in text
+    assert "curl -fsS http://0.0.0.0:13337/healthz" in text
 
 
 def test_hcl_code_server_config_does_not_use_nested_shell_heredoc():
@@ -134,4 +134,15 @@ def test_hcl_code_server_config_does_not_use_nested_shell_heredoc():
 
     assert "<<'YAML'" not in text
     assert "printf '%s\\n'" in text
-    assert "bind-addr: 127.0.0.1:13337" in text
+    assert "bind-addr: 0.0.0.0:13337" in text
+
+
+def test_hcl_startup_script_is_not_rewritten_by_docker_gateway_replace():
+    text = render_main_tf_hcl(images={"images": []}, catalog=_catalog())
+
+    startup_start = text.index("  startup_script = <<-EOT")
+    startup_end = text.index("  EOT", startup_start)
+    startup = text[startup_start:startup_end]
+    assert "127.0.0.1:13337" not in startup
+    assert "localhost:13337" not in startup
+    assert "/tmp/codervps-startup-debug.log" in startup

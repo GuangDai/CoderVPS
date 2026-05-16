@@ -319,6 +319,8 @@ def _startup_script_hcl() -> str:
       printf '[codervps-startup] %s\\n' "$*"
     }}
 
+    exec > >(tee -a /tmp/codervps-startup-debug.log) 2>&1
+
     export HOME="{HOME_DIR}"
     export CDEV_RUNTIME_ROOT="{CDEV_RUNTIME_ROOT}"
     export RUNTIME_LIB_DIR="/opt/cde/runtime/lib"
@@ -327,7 +329,7 @@ def _startup_script_hcl() -> str:
     mkdir -p "{PROJECT_DIR}" "$HOME/.config/code-server" "$CDEV_RUNTIME_ROOT"
 
     printf '%s\\n' \\
-      'bind-addr: 127.0.0.1:13337' \\
+      'bind-addr: 0.0.0.0:13337' \\
       'auth: none' \\
       'cert: false' \\
       > "$HOME/.config/code-server/config.yaml"
@@ -340,17 +342,17 @@ def _startup_script_hcl() -> str:
         --auth none \\
         --disable-telemetry \\
         --disable-update-check \\
-        --bind-addr 127.0.0.1:13337 \\
+        --bind-addr 0.0.0.0:13337 \\
         "{PROJECT_DIR}" \\
         > /tmp/code-server.log 2>&1 &
       for _ in $(seq 1 60); do
-        if curl -fsS http://127.0.0.1:13337/healthz >/dev/null 2>&1; then
+        if curl -fsS http://0.0.0.0:13337/healthz >/dev/null 2>&1; then
           log "code-server is healthy"
           break
         fi
         sleep 0.5
       done
-      if ! curl -fsS http://127.0.0.1:13337/healthz >/dev/null 2>&1; then
+      if ! curl -fsS http://0.0.0.0:13337/healthz >/dev/null 2>&1; then
         log "code-server did not become healthy"
         tail -n 80 /tmp/code-server.log >&2 || true
         exit 1
